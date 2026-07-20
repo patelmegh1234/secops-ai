@@ -14,12 +14,13 @@ import {
 } from "@/lib/api";
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   try {
-    const incident = await getIncident(params.id);
+    const { id } = await params;
+    const incident = await getIncident(id);
     return {
       title: `Review: ${incident.cve_id || "Security Issue"}`,
       description: incident.title,
@@ -32,17 +33,18 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export const dynamic = "force-dynamic";
 
 export default async function PatchReviewPage({ params }: PageProps) {
+  const { id } = await params;
   let incident, patch, sandbox, traces;
 
   try {
-    incident = await getIncident(params.id);
+    incident = await getIncident(id);
   } catch {
     notFound();
   }
 
-  try { patch = await getIncidentPatch(params.id); } catch {}
-  try { sandbox = await getSandboxResult(params.id); } catch {}
-  try { traces = await getAgentTraces(params.id); } catch {}
+  try { patch = await getIncidentPatch(id); } catch {}
+  try { sandbox = await getSandboxResult(id); } catch {}
+  try { traces = await getAgentTraces(id); } catch {}
 
   return (
     <div className="space-y-6 animate-fade-in max-w-6xl">
