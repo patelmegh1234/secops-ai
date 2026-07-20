@@ -1,0 +1,86 @@
+[tool.poetry]
+name = "secops-ai-backend"
+version = "0.1.0"
+description = "Autonomous event-driven SecOps agent — vulnerability triage, patch generation, and human-in-the-loop PR creation."
+authors = ["SecOps-AI Team"]
+readme = "README.md"
+packages = [{ include = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+# --- Web Framework ---
+fastapi = "^0.111.0"
+uvicorn = { extras = ["standard"], version = "^0.30.0" }
+python-multipart = "^0.0.9"
+
+# --- Validation & Settings ---
+pydantic = "^2.7.0"
+pydantic-settings = "^2.3.0"
+
+# --- Database ---
+sqlalchemy = { extras = ["asyncio"], version = "^2.0.30" }
+asyncpg = "^0.29.0"
+alembic = "^1.13.1"
+
+# --- Cache & Queue ---
+redis = { extras = ["hiredis"], version = "^5.0.4" }
+celery = { extras = ["redis"], version = "^5.4.0" }
+
+# --- AI / Agents ---
+crewai = "^0.55.0"
+openai = "^1.35.0"
+anthropic = "^0.29.0"
+langchain-openai = "^0.1.17"
+
+# --- Integrations ---
+docker = "^7.1.0"
+PyGithub = "^2.3.0"
+slack-sdk = "^3.27.2"
+
+# --- Security & Auth ---
+python-jose = { extras = ["cryptography"], version = "^3.3.0" }
+passlib = { extras = ["bcrypt"], version = "^1.7.4" }
+slowapi = "^0.1.9"
+
+# --- Observability ---
+structlog = "^24.2.0"
+
+# --- HTTP ---
+httpx = { extras = ["http2"], version = "^0.27.0" }
+
+# --- Utilities ---
+diff-match-patch = "^20230430"
+python-dotenv = "^1.0.1"
+tenacity = "^8.4.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-asyncio = "^0.23.7"
+pytest-cov = "^5.0.0"
+pytest-mock = "^3.14.0"
+httpx = { extras = ["http2"], version = "^0.27.0" }
+ruff = "^0.4.0"
+mypy = "^1.10.0"
+types-passlib = "^1.7.7"
+types-redis = "^4.6.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=70"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

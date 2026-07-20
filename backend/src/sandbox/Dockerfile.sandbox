@@ -1,0 +1,20 @@
+# Sandbox container for running patched code tests.
+# Built from python:3.11-slim for minimal attack surface.
+
+FROM python:3.11-slim
+
+# Security: Run as non-root user
+RUN groupadd --system sandbox && useradd --system --gid sandbox --no-create-home sandbox
+
+WORKDIR /workspace
+
+# Install test dependencies
+RUN pip install --no-cache-dir pytest pytest-cov pytest-asyncio
+
+# Copy workspace files at runtime via volume mount.
+# This Dockerfile is the BASE — actual test execution mounts the repo.
+
+USER sandbox
+
+# Default command — overridden by controller.py
+CMD ["pytest", "--tb=short", "-q"]

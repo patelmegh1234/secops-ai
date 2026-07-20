@@ -1,0 +1,113 @@
+version: "3.9"
+
+# Full local development stack
+# Run: docker compose up --build
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: secops_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: secops_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: secops_redis
+    command: redis-server --appendonly yes --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: secops_api
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/secops_ai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      APP_ENV: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src  # Hot-reload in dev (override CMD for uvicorn --reload)
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker for sandbox
+    restart: unless-stopped
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: secops_worker
+    command: >
+      celery -A src.workers.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --queues=vulnerability,github
+      --hostname=worker@%h
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/secops_ai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      APP_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - /var/run/docker.sock:/var/run/docker.sock  # For sandbox execution
+    restart: unless-stopped
+
+  # ── Celery Flower (monitoring UI) ───────────────────────────────────────────
+  flower:
+    image: mher/flower:2.0
+    container_name: secops_flower
+    command: celery flower --broker=redis://redis:6379/1 --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: secops_network

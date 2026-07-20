@@ -1,0 +1,51 @@
+{
+  "errors": [],
+  "generated_at": "2024-01-15T12:00:00Z",
+  "metrics": {
+    "CONFIDENCE.HIGH": {"HIGH": 1, "MEDIUM": 1},
+    "CONFIDENCE.LOW": {},
+    "SEVERITY.HIGH": {"HIGH": 1},
+    "SEVERITY.MEDIUM": {"MEDIUM": 1}
+  },
+  "results": [
+    {
+      "code": {
+        "bytes": "aW1wb3J0IHN1YnByb2Nlc3M=",
+        "filename": "src/utils/runner.py",
+        "line_range": {"start": 15, "end": 15},
+        "node_type": "Call"
+      },
+      "col_offset": 4,
+      "end_col_offset": 55,
+      "filename": "src/utils/runner.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {"id": 78, "link": "https://cwe.mitre.org/data/definitions/78.html"},
+      "issue_severity": "HIGH",
+      "issue_text": "subprocess call with shell=True identified, security issue.",
+      "line_number": 15,
+      "line_range": [15],
+      "more_info": "https://bandit.readthedocs.io/en/1.7.5/plugins/b602_subprocess_popen_with_shell_equals_true.html",
+      "test_id": "B602",
+      "test_name": "subprocess_popen_with_shell_equals_true"
+    },
+    {
+      "col_offset": 12,
+      "end_col_offset": 56,
+      "filename": "src/auth/password.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {"id": 327, "link": "https://cwe.mitre.org/data/definitions/327.html"},
+      "issue_severity": "MEDIUM",
+      "issue_text": "Use of MD5 algorithm identified.",
+      "line_number": 8,
+      "line_range": [8],
+      "more_info": "https://bandit.readthedocs.io/en/1.7.5/plugins/b303_md5.html",
+      "test_id": "B303",
+      "test_name": "blacklist_md5"
+    }
+  ],
+  "metadata": {
+    "repo_owner": "test-org",
+    "repo_name": "vulnerable-app",
+    "branch": "main"
+  }
+}

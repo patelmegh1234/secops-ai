@@ -1,0 +1,60 @@
+{
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-32681",
+          "PkgName": "requests",
+          "InstalledVersion": "2.28.0",
+          "FixedVersion": "2.31.0",
+          "Layer": {},
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-32681",
+          "Title": "requests: Proxy-Authorization headers unstripped during cross-origin redirect",
+          "Description": "Requests is a HTTP library. Since Requests 2.3.0, Requests has been leaking Proxy-Authorization headers to destination servers when redirected to an HTTPS endpoint.",
+          "Severity": "MEDIUM",
+          "CweIDs": ["CWE-601"],
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:H/I:N/A:N",
+              "V3Score": 6.1
+            }
+          },
+          "References": ["https://nvd.nist.gov/vuln/detail/CVE-2023-32681"],
+          "PublishedDate": "2023-05-26T18:15:00Z",
+          "LastModifiedDate": "2023-06-09T17:15:00Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2023-28119",
+          "PkgName": "crytic-compile",
+          "InstalledVersion": "0.2.2",
+          "FixedVersion": "0.3.1",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-28119",
+          "Title": "Code injection vulnerability in crytic-compile",
+          "Description": "crytic-compile 0.2.2 and before allows code injection via a crafted .crytic_compile.config.json file.",
+          "Severity": "HIGH",
+          "CweIDs": ["CWE-94"],
+          "CVSS": {
+            "nvd": {
+              "V3Score": 8.8
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "repo_owner": "test-org",
+    "repo_name": "vulnerable-app",
+    "branch": "main"
+  },
+  "ArtifactName": "vulnerable-app",
+  "ArtifactType": "repository",
+  "Metadata": {
+    "ImageConfig": {}
+  }
+}

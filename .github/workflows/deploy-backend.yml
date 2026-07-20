@@ -1,0 +1,49 @@
+name: Deploy Backend to Railway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+jobs:
+  deploy:
+    name: Deploy FastAPI + Celery to Railway
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        working-directory: backend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service secops-ai-backend --detach
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl --fail "${{ secrets.RAILWAY_API_URL }}/health" \
+            --max-time 10 \
+            --retry 3 \
+            --retry-delay 5 \
+            || (echo "Health check failed!" && exit 1)
+
+      - name: Notify Slack on success
+        if: success()
+        run: |
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"text":"✅ SecOps-AI backend deployed to Railway successfully."}'
+
+      - name: Notify Slack on failure
+        if: failure()
+        run: |
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"text":"❌ SecOps-AI backend deployment FAILED. Check GitHub Actions."}'
