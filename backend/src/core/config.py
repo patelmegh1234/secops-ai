@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "json"
 
+    # ── Observability (Phase 3.4 / 3.5) ────────────────────────────
+    sentry_dsn: str = ""  # Empty = Sentry disabled. Set to your Sentry project DSN in prod.
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

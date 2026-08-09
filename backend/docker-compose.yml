@@ -97,12 +97,21 @@ services:
   flower:
     image: mher/flower:2.0
     container_name: secops_flower
-    command: celery flower --broker=redis://redis:6379/1 --port=5555
+    command: >
+      celery flower
+      --broker=redis://redis:6379/1
+      --port=5555
+      --basic-auth=${FLOWER_BASIC_AUTH:-admin:change_in_prod}
+      --max-tasks=10000
+      --purge-offline-workers=60
+    environment:
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:change_in_prod}
     ports:
       - "5555:5555"
     depends_on:
       - redis
     restart: unless-stopped
+
 
 volumes:
   postgres_data:

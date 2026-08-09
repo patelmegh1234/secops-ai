@@ -19,7 +19,7 @@ from slowapi.util import get_remote_address
 
 from src.api.middleware.cors import add_cors_middleware
 from src.api.middleware.rate_limiter import limiter
-from src.api.routers import approvals, dashboard, health, webhooks, workspaces
+from src.api.routers import approvals, dashboard, health, metrics, webhooks, workspaces
 from src.core.config import get_settings
 from src.core.logging import configure_logging, get_logger
 from src.database.connection import dispose_db, init_db
@@ -115,6 +115,22 @@ ws_manager = ConnectionManager()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application startup and shutdown lifecycle."""
     configure_logging()
+
+    # ── Sentry (Phase 3.5) — optional, no-op if DSN not set ───────────────
+    if settings.sentry_dsn:
+        try:
+            import sentry_sdk
+            sentry_sdk.init(
+                dsn=settings.sentry_dsn,
+                environment=settings.app_env,
+                traces_sample_rate=0.10,  # 10% of transactions traced
+                profiles_sample_rate=0.05,
+                send_default_pii=False,   # Never send source code / payloads
+            )
+            logger.info("sentry_initialised", env=settings.app_env)
+        except ImportError:
+            logger.warning("sentry_sdk_not_installed", hint="pip install sentry-sdk")
+
     logger.info(
         "secops_ai_starting",
         env=settings.app_env,
@@ -166,6 +182,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ───────────────────────────────────────────────────────────
     app.include_router(health.router, tags=["Health"])
+    app.include_router(metrics.router, tags=["Observability"])  # /metrics (Prometheus)
     app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
     app.include_router(approvals.router, prefix="/slack", tags=["Slack"])
     app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])

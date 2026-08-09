@@ -41,10 +41,13 @@ slack-sdk = "^3.27.2"
 # --- Security & Auth ---
 python-jose = { extras = ["cryptography"], version = "^3.3.0" }
 passlib = { extras = ["bcrypt"], version = "^1.7.4" }
+bcrypt = "^4.1.0"
 slowapi = "^0.1.9"
 
 # --- Observability ---
 structlog = "^24.2.0"
+prometheus-client = "^0.20.0"
+sentry-sdk = { extras = ["fastapi"], version = "^2.0.0" }
 
 # --- HTTP ---
 httpx = { extras = ["http2"], version = "^0.27.0" }
