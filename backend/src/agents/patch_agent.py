@@ -18,6 +18,7 @@ from src.agents.triage_agent import TriageResult
 from src.core.config import get_settings
 from src.core.logging import get_logger
 from src.database.schemas import VulnerabilityCreate
+from src.sandbox.result_parser import SandboxFailureTrace
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -71,9 +72,41 @@ def build_patch_agent() -> Agent:
 
 
 def build_patch_task(
-    agent: Agent, vuln: VulnerabilityCreate, triage: TriageResult
+    agent: Agent,
+    vuln: VulnerabilityCreate,
+    triage: TriageResult,
+    repatch_context: "SandboxFailureTrace | None" = None,
 ) -> Task:
-    """Create the patch generation task."""
+    """Create the patch generation task.
+
+    Args:
+        agent: The CrewAI patch agent.
+        vuln: The original vulnerability record.
+        triage: Output from the triage agent (contains vulnerable code).
+        repatch_context: When provided, the previous patch failed sandbox tests.
+            The failure trace is injected into the prompt so the agent can
+            correct its approach on this second attempt.
+    """
+    # Build optional repatch section
+    repatch_section = ""
+    if repatch_context is not None:
+        failure_summary = repatch_context.as_prompt_context()
+        repatch_section = f"""
+
+## IMPORTANT: Previous Patch Failed Sandbox Tests
+Your previous patch was rejected by the automated test suite.
+You MUST address the failure below in your new patch.
+
+### Failure Details
+{failure_summary}
+
+### Instructions for This Repatch Attempt
+- Do NOT repeat the same change that caused the failure.
+- Read the failing test names carefully — they tell you what behaviour broke.
+- The patch must be minimal: fix the security issue without breaking the tests above.
+- If the test failure suggests the patch changed control flow, revert that change.
+"""
+
     return Task(
         description=f"""
 You must generate a security patch for the following confirmed vulnerability.
@@ -90,7 +123,7 @@ You must generate a security patch for the following confirmed vulnerability.
 ```python
 {triage.vulnerable_code}
 ```
-
+{repatch_section}
 ## Patch Requirements (NON-NEGOTIABLE)
 1. Fix the EXACT security issue identified — no more, no less.
 2. Preserve all existing function signatures and return types.
@@ -121,16 +154,26 @@ You must generate a security patch for the following confirmed vulnerability.
 
 
 async def run_patch_agent(
-    vuln: VulnerabilityCreate, triage: TriageResult
+    vuln: VulnerabilityCreate,
+    triage: TriageResult,
+    repatch_context: "SandboxFailureTrace | None" = None,
 ) -> PatchResult:
-    """Execute the patch agent and return a structured PatchResult."""
+    """Execute the patch agent and return a structured PatchResult.
+
+    Args:
+        vuln: The vulnerability to fix.
+        triage: Triage agent output containing the vulnerable code.
+        repatch_context: When provided, this is a retry triggered by sandbox
+            failure. The trace is injected into the task prompt so the agent
+            can correct its previous attempt.
+    """
     start_ms = int(time.time() * 1000)
 
     try:
         from crewai import Crew, Process
 
         agent = build_patch_agent()
-        task = build_patch_task(agent, vuln, triage)
+        task = build_patch_task(agent, vuln, triage, repatch_context=repatch_context)
 
         crew = Crew(
             agents=[agent],

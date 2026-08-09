@@ -31,6 +31,45 @@ def _drop_color_message_key(
     event_dict.pop("color_message", None)
     return event_dict
 
+# Fields that may contain source code or raw payloads.
+# Values longer than REDACT_THRESHOLD chars are replaced with a safe token.
+_REDACT_KEYS: frozenset[str] = frozenset({
+    "original_code",
+    "patched_code",
+    "diff",
+    "diff_unified",
+    "stdout",
+    "stderr",
+    "raw_payload",
+    "vulnerable_code",
+    "repatch_context",
+})
+_REDACT_THRESHOLD = 100
+
+
+def redact_sensitive_fields(
+    logger: WrappedLogger, method_name: str, event_dict: EventDict
+) -> EventDict:
+    """
+    Strip source code and raw payloads from structured log output.
+
+    Railway (and most cloud log aggregators) retain log data indefinitely.
+    Emitting raw source code into logs is a privacy and security risk —
+    it may contain secrets, proprietary algorithms, or PII embedded in
+    variable names and comments.
+
+    This processor replaces any value in _REDACT_KEYS that exceeds
+    _REDACT_THRESHOLD characters with "[REDACTED: N chars]".
+    """
+    for key in _REDACT_KEYS:
+        if key in event_dict:
+            value = event_dict[key]
+            if isinstance(value, str) and len(value) > _REDACT_THRESHOLD:
+                event_dict[key] = f"[REDACTED: {len(value)} chars]"
+            elif isinstance(value, bytes) and len(value) > _REDACT_THRESHOLD:
+                event_dict[key] = f"[REDACTED: {len(value)} bytes]"
+    return event_dict
+
 
 def configure_logging() -> None:
     """
@@ -44,6 +83,7 @@ def configure_logging() -> None:
         structlog.processors.TimeStamper(fmt="iso"),
         _add_app_context,
         _drop_color_message_key,
+        redact_sensitive_fields,          # Strip source code from logs
         structlog.stdlib.ExtraAdder(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,

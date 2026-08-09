@@ -35,19 +35,22 @@ import enum
 
 
 class VulnerabilityStatus(str, enum.Enum):
-    PENDING = "PENDING"
-    TRIAGING = "TRIAGING"
-    PATCHING = "PATCHING"
-    PATCH_FAILED = "PATCH_FAILED"
-    SANDBOX_RUNNING = "SANDBOX_RUNNING"
-    SANDBOX_PASSED = "SANDBOX_PASSED"
-    SANDBOX_FAILED = "SANDBOX_FAILED"
-    AWAITING_APPROVAL = "AWAITING_APPROVAL"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-    PR_OPENED = "PR_OPENED"
-    PR_MERGED = "PR_MERGED"
-    ERROR = "ERROR"
+    PENDING            = "PENDING"
+    TRIAGING           = "TRIAGING"
+    PATCHING           = "PATCHING"
+    PATCH_FAILED       = "PATCH_FAILED"
+    SANDBOX_RUNNING    = "SANDBOX_RUNNING"
+    SANDBOX_PASSED     = "SANDBOX_PASSED"
+    SANDBOX_FAILED     = "SANDBOX_FAILED"
+    TRACE_ANALYZED     = "TRACE_ANALYZED"   # Failure trace extracted, will repatch
+    REPATCHING         = "REPATCHING"       # Second patch attempt using failure trace
+    AWAITING_APPROVAL  = "AWAITING_APPROVAL"
+    APPROVED           = "APPROVED"
+    REJECTED           = "REJECTED"
+    PR_OPENED          = "PR_OPENED"
+    PR_MERGED          = "PR_MERGED"
+    PR_CLOSED          = "PR_CLOSED"
+    ERROR              = "ERROR"
 
 
 class Severity(str, enum.Enum):
@@ -136,6 +139,32 @@ class Vulnerability(Base, TimestampMixin):
     # Celery task ID for tracking
     celery_task_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
+    # Idempotency: prevent duplicate pipeline runs for the same CVE+repo+file
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
+    # Staged MTTR timestamps (set at each pipeline transition)
+    # Allows accurate per-stage latency measurement and honest MTTR reporting.
+    triage_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    patch_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sandbox_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    slack_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    human_decision_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    pr_opened_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     patches: Mapped[list["Patch"]] = relationship(
         "Patch", back_populates="vulnerability", cascade="all, delete-orphan"
@@ -221,6 +250,12 @@ class SandboxRun(Base, TimestampMixin):
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
 
     timed_out: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Tracks which sandbox attempt this was (1 = first, 2 = repatch retry)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # SandboxMode enum value: pytest_passed, pytest_failed, no_tests, static_only, etc.
+    sandbox_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Relationships
     patch: Mapped["Patch"] = relationship("Patch", back_populates="sandbox_runs")

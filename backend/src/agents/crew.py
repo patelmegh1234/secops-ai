@@ -14,6 +14,7 @@ from src.core.config import get_settings
 from src.core.logging import get_logger
 from src.database.models import AgentName
 from src.database.schemas import VulnerabilityCreate
+from src.sandbox.result_parser import SandboxFailureTrace
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -37,12 +38,20 @@ class CrewResult:
 async def run_security_crew(
     vuln: VulnerabilityCreate,
     vuln_id: uuid.UUID,
+    repatch_context: SandboxFailureTrace | None = None,
 ) -> CrewResult:
     """
     Orchestrates the full security remediation pipeline:
     1. Triage Agent — analyze and fetch vulnerable code
-    2. Patch Agent — generate a code fix
+    2. Patch Agent — generate a code fix (uses repatch_context on sandbox-retry)
     3. Guardrail Agent — validate the patch (up to MAX_GUARDRAIL_RETRIES)
+
+    Args:
+        vuln: The vulnerability to remediate.
+        vuln_id: DB primary key for audit trace records.
+        repatch_context: When provided, the previous sandbox run failed.
+            The failure trace is passed directly to the patch agent so it
+            can correct the specific test failures before re-running the sandbox.
 
     All agent telemetry is collected in `traces` for DB persistence.
     """
@@ -82,7 +91,11 @@ async def run_security_crew(
     for attempt in range(1, MAX_GUARDRAIL_RETRIES + 2):  # +2 for initial + retries
         logger.info("crew_patch_start", vuln_id=str(vuln_id), attempt=attempt)
 
-        patch = await run_patch_agent(vuln, triage)
+        # On the first guardrail attempt, pass sandbox repatch context if provided.
+        # On subsequent guardrail retries, repatch_context is cleared (new issue is
+        # now a guardrail rejection, not a sandbox failure).
+        context = repatch_context if attempt == 1 else None
+        patch = await run_patch_agent(vuln, triage, repatch_context=context)
 
         traces.append({
             "vulnerability_id": vuln_id,

@@ -9,6 +9,7 @@ Tasks:
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from celery import Task
@@ -17,6 +18,9 @@ from celery.utils.log import get_task_logger
 from src.workers.celery_app import celery_app
 
 logger = get_task_logger(__name__)
+
+# Maximum sandbox attempts per vulnerability (initial + retries)
+MAX_SANDBOX_ATTEMPTS = 2
 
 
 def run_async(coro: Any) -> Any:
@@ -153,66 +157,177 @@ async def _process_vulnerability_async(
                         db, AgentTraceCreate(vulnerability_id=vuln_id, **trace_data)
                     )
 
-            # ── Step 6: Run Docker sandbox ─────────────────────────────────
-            async with get_db_context() as db:
-                await crud.update_vulnerability(
-                    db, vuln_id, VulnerabilityUpdate(status=VulnerabilityStatus.SANDBOX_RUNNING)
+            # ── Step 6: Sandbox retry loop ─────────────────────────────────
+            # On first sandbox failure, extract a failure trace and feed it
+            # back to the patch agent for one corrective attempt.
+            # Both runs are stored in sandbox_runs with attempt_number.
+
+            from src.sandbox.result_parser import SandboxFailureTrace, SandboxMode, build_failure_trace
+
+            current_crew_result = crew_result
+            sandbox_result = None
+            failure_trace: SandboxFailureTrace | None = None
+
+            for sandbox_attempt in range(1, MAX_SANDBOX_ATTEMPTS + 1):
+
+                # On retry: re-run patch agent with failure trace, save new patch
+                if sandbox_attempt > 1 and failure_trace is not None:
+                    async with get_db_context() as db:
+                        await crud.update_vulnerability(
+                            db, vuln_id,
+                            VulnerabilityUpdate(status=VulnerabilityStatus.REPATCHING),
+                        )
+                    await redis_client.publish("secops:events", json.dumps({
+                        **event, "status": VulnerabilityStatus.REPATCHING,
+                    }))
+
+                    current_crew_result = await run_security_crew(
+                        vuln_create, vuln_id, repatch_context=failure_trace
+                    )
+
+                    if not current_crew_result.success:
+                        logger.warning(
+                            f"[process_vulnerability] Repatch crew failed for {vuln_id}: "
+                            f"{current_crew_result.error}"
+                        )
+                        break
+
+                    # Save the repatch as a new Patch record on the same vuln
+                    async with get_db_context() as db:
+                        from src.database.schemas import PatchCreate as _PatchCreate
+                        repatch = await crud.create_patch(
+                            db,
+                            _PatchCreate(
+                                vulnerability_id=vuln_id,
+                                original_code=current_crew_result.original_code,
+                                patched_code=current_crew_result.patched_code,
+                                diff_unified=current_crew_result.diff,
+                                agent_reasoning=current_crew_result.reasoning,
+                                owasp_flags=current_crew_result.owasp_flags,
+                            ),
+                        )
+                        patch_id = repatch.id
+
+                # Mark sandbox as running
+                async with get_db_context() as db:
+                    await crud.update_vulnerability(
+                        db, vuln_id,
+                        VulnerabilityUpdate(status=VulnerabilityStatus.SANDBOX_RUNNING),
+                    )
+                await redis_client.publish("secops:events", json.dumps({
+                    **event, "status": VulnerabilityStatus.SANDBOX_RUNNING,
+                }))
+
+                sandbox_result = await run_sandbox(
+                    repo_owner=vuln_create.repo_owner,
+                    repo_name=vuln_create.repo_name,
+                    branch=vuln_create.repo_branch,
+                    file_path=vuln_create.file_path,
+                    patched_code=current_crew_result.patched_code,
                 )
-            await redis_client.publish("secops:events", json.dumps({
-                **event, "status": VulnerabilityStatus.SANDBOX_RUNNING
-            }))
 
-            sandbox_result = await run_sandbox(
-                repo_owner=vuln_create.repo_owner,
-                repo_name=vuln_create.repo_name,
-                branch=vuln_create.repo_branch,
-                file_path=vuln_create.file_path,
-                patched_code=crew_result.patched_code,
-            )
+                # Stamp sandbox_completed_at on first completion
+                sandbox_completed_ts = datetime.now(timezone.utc)
 
-            from src.database.schemas import SandboxRunCreate
-            async with get_db_context() as db:
-                await crud.create_sandbox_run(
-                    db,
-                    SandboxRunCreate(
-                        patch_id=patch_id,
-                        container_id=sandbox_result.container_id,
-                        exit_code=sandbox_result.exit_code,
-                        stdout=sandbox_result.stdout,
-                        stderr=sandbox_result.stderr,
-                        tests_passed=sandbox_result.tests_passed,
-                        tests_failed=sandbox_result.tests_failed,
-                        duration_ms=sandbox_result.duration_ms,
-                        timed_out=sandbox_result.timed_out,
-                    ),
+                # Build a typed failure trace regardless (used below if needed)
+                failure_trace = build_failure_trace(
+                    stdout=sandbox_result.stdout,
+                    stderr=sandbox_result.stderr,
+                    exit_code=sandbox_result.exit_code,
+                    timed_out=sandbox_result.timed_out,
                 )
 
-            sandbox_status = (
+                # Store this sandbox run with its attempt number
+                async with get_db_context() as db:
+                    from src.database.schemas import SandboxRunCreate as _SandboxRunCreate
+                    await crud.create_sandbox_run(
+                        db,
+                        _SandboxRunCreate(
+                            patch_id=patch_id,
+                            container_id=sandbox_result.container_id,
+                            exit_code=sandbox_result.exit_code,
+                            stdout=sandbox_result.stdout,
+                            stderr=sandbox_result.stderr,
+                            tests_passed=sandbox_result.tests_passed,
+                            tests_failed=sandbox_result.tests_failed,
+                            duration_ms=sandbox_result.duration_ms,
+                            timed_out=sandbox_result.timed_out,
+                            attempt_number=sandbox_attempt,
+                            sandbox_mode=failure_trace.mode.value,
+                        ),
+                    )
+                    await crud.update_vulnerability(
+                        db, vuln_id,
+                        VulnerabilityUpdate(sandbox_completed_at=sandbox_completed_ts),
+                    )
+
+                if sandbox_result.passed:
+                    # Sandbox passed — move forward to Slack
+                    logger.info(
+                        f"[process_vulnerability] Sandbox passed on attempt {sandbox_attempt} "
+                        f"for {vuln_id}"
+                    )
+                    break
+
+                # Sandbox failed — decide whether to retry
+                sandbox_status = VulnerabilityStatus.SANDBOX_FAILED
+
+                if sandbox_attempt < MAX_SANDBOX_ATTEMPTS:
+                    logger.warning(
+                        f"[process_vulnerability] Sandbox failed (attempt {sandbox_attempt}), "
+                        f"extracting trace for repatch: {vuln_id}"
+                    )
+                    async with get_db_context() as db:
+                        await crud.update_vulnerability(
+                            db, vuln_id,
+                            VulnerabilityUpdate(status=VulnerabilityStatus.TRACE_ANALYZED),
+                        )
+                    await redis_client.publish("secops:events", json.dumps({
+                        **event, "status": VulnerabilityStatus.TRACE_ANALYZED,
+                        "failure_mode": failure_trace.mode.value,
+                    }))
+                    # Loop continues: failure_trace is passed to run_security_crew() above
+                else:
+                    # All attempts exhausted — mark final failure
+                    async with get_db_context() as db:
+                        await crud.update_vulnerability(
+                            db, vuln_id, VulnerabilityUpdate(status=sandbox_status)
+                        )
+                    await redis_client.publish("secops:events", json.dumps({
+                        **event,
+                        "status": sandbox_status,
+                        "sandbox_passed": False,
+                        "tests_passed": sandbox_result.tests_passed,
+                        "tests_failed": sandbox_result.tests_failed,
+                        "sandbox_mode": failure_trace.mode.value,
+                    }))
+
+            # ── Step 7: Send Slack notification ────────────────────────────
+            if sandbox_result is None:
+                continue
+
+            sandbox_passed = sandbox_result.passed
+
+            # Set final sandbox status (PASSED or FAILED)
+            final_sandbox_status = (
                 VulnerabilityStatus.SANDBOX_PASSED
-                if sandbox_result.passed
+                if sandbox_passed
                 else VulnerabilityStatus.SANDBOX_FAILED
             )
             async with get_db_context() as db:
                 await crud.update_vulnerability(
-                    db, vuln_id, VulnerabilityUpdate(status=sandbox_status)
+                    db, vuln_id, VulnerabilityUpdate(status=final_sandbox_status)
                 )
-
             await redis_client.publish("secops:events", json.dumps({
                 **event,
-                "status": sandbox_status,
-                "sandbox_passed": sandbox_result.passed,
+                "status": final_sandbox_status,
+                "sandbox_passed": sandbox_passed,
                 "tests_passed": sandbox_result.tests_passed,
                 "tests_failed": sandbox_result.tests_failed,
+                "sandbox_mode": failure_trace.mode.value if failure_trace else None,
             }))
 
-            # ── Step 7: Send Slack notification ────────────────────────────
-            await crud.update_vulnerability(
-                db if False else (await get_db_context().__aenter__()),
-                vuln_id,
-                VulnerabilityUpdate(status=VulnerabilityStatus.AWAITING_APPROVAL),
-            )
-
-            # Reload full objects for Slack notification
+            # Reload objects for Slack notification
             async with get_db_context() as db:
                 vuln_obj = await crud.get_vulnerability(db, vuln_id)
                 patch_obj = await crud.get_patch(db, patch_id)
@@ -223,9 +338,15 @@ async def _process_vulnerability_async(
                 sandbox_result=sandbox_result,
             )
 
+            # Stamp Slack sent timestamp + AWAITING_APPROVAL
+            slack_sent_ts = datetime.now(timezone.utc)
             async with get_db_context() as db:
                 await crud.update_vulnerability(
-                    db, vuln_id, VulnerabilityUpdate(status=VulnerabilityStatus.AWAITING_APPROVAL)
+                    db, vuln_id,
+                    VulnerabilityUpdate(
+                        status=VulnerabilityStatus.AWAITING_APPROVAL,
+                        slack_sent_at=slack_sent_ts,
+                    ),
                 )
 
             results.append({

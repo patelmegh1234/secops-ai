@@ -46,6 +46,14 @@ class VulnerabilityUpdate(BaseSchema):
     status: VulnerabilityStatus | None = None
     celery_task_id: str | None = None
     owasp_category: str | None = None
+    idempotency_key: str | None = None
+    # Staged MTTR timestamps — set at each pipeline state transition
+    triage_completed_at: datetime | None = None
+    patch_generated_at: datetime | None = None
+    sandbox_completed_at: datetime | None = None
+    slack_sent_at: datetime | None = None
+    human_decision_at: datetime | None = None
+    pr_opened_at: datetime | None = None
 
 
 class VulnerabilityResponse(BaseSchema):
@@ -121,6 +129,10 @@ class SandboxRunCreate(BaseSchema):
     tests_errored: int = 0
     duration_ms: int
     timed_out: bool = False
+    # Tracks which sandbox attempt (1 = initial, 2 = repatch retry)
+    attempt_number: int = 1
+    # SandboxMode enum string value for dashboard display
+    sandbox_mode: str | None = None
 
 
 class SandboxRunResponse(BaseSchema):
