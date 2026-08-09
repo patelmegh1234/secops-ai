@@ -4,6 +4,7 @@ Validates that the generated patch actually fixes the vulnerability
 and doesn't introduce new security issues. Can reject and request retries.
 """
 
+import fnmatch
 import json
 import re
 import time
@@ -28,10 +29,93 @@ class GuardrailResult:
     success: bool
     approved: bool = False
     notes: str = ""
+    rejection_reason: str = ""
     error: str | None = None
     duration_ms: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+# ── Patch scope validation (runs before LLM, no API cost) ─────────────────
+
+# File extensions the patch agent is allowed to modify.
+# Anything outside this set is rejected without calling the LLM.
+ALLOWED_EXTENSIONS: frozenset[str] = frozenset({
+    ".py", ".txt", ".toml", ".cfg", ".ini",
+    ".yaml", ".yml", ".json", ".md", ".rst",
+})
+
+# Glob patterns for file paths that must NEVER be patched.
+# These files commonly contain secrets, credentials, or deployment config.
+BLOCKED_PATH_PATTERNS: tuple[str, ...] = (
+    "*.env",
+    "*.env.*",
+    "*secret*",
+    "*credential*",
+    "*password*",
+    "*private_key*",
+    "settings.py",
+    "config.py",
+    "*/.git/*",
+    "*/migrations/*",   # DB migrations must be human-reviewed
+)
+
+# Maximum number of changed lines in the unified diff.
+# Patches touching more than this are too broad to automatically trust.
+MAX_DIFF_LINES = 150
+
+
+def validate_patch_scope(
+    file_path: str,
+    diff: str,
+    patched_code: str,
+) -> tuple[bool, str]:
+    """
+    Fast, LLM-free scope check run before the guardrail agent.
+
+    Returns:
+        (True, "")              if the patch scope is acceptable
+        (False, rejection_msg)  if the patch should be immediately rejected
+
+    Three things are checked:
+    1. File extension must be in ALLOWED_EXTENSIONS
+    2. File path must not match any BLOCKED_PATH_PATTERNS
+    3. Diff must not touch more than MAX_DIFF_LINES lines
+    """
+    import os
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext and ext not in ALLOWED_EXTENSIONS:
+        return (
+            False,
+            f"Patch rejected: file type '{ext}' is not in the allowed extension list "
+            f"({', '.join(sorted(ALLOWED_EXTENSIONS))}). "
+            "Only source code and configuration files may be patched automatically.",
+        )
+
+    # Normalise path separators for cross-platform matching
+    normalised_path = file_path.replace("\\", "/")
+    for pattern in BLOCKED_PATH_PATTERNS:
+        if fnmatch.fnmatch(normalised_path.lower(), pattern.lower()):
+            return (
+                False,
+                f"Patch rejected: file path '{file_path}' matches blocked pattern '{pattern}'. "
+                "Files matching this pattern may contain secrets or require manual review.",
+            )
+
+    # Count changed lines in unified diff (lines starting with + or - but not +++ / ---)
+    changed_lines = sum(
+        1 for line in diff.splitlines()
+        if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))
+    )
+    if changed_lines > MAX_DIFF_LINES:
+        return (
+            False,
+            f"Patch rejected: diff touches {changed_lines} lines which exceeds the "
+            f"maximum of {MAX_DIFF_LINES} lines. Patches this large carry high regression "
+            "risk and must be reviewed manually.",
+        )
+
+    return (True, "")
 
 
 def build_guardrail_agent() -> Agent:
@@ -137,8 +221,34 @@ async def run_guardrail_agent(
     triage: TriageResult,
     patch: PatchResult,
 ) -> GuardrailResult:
-    """Execute the guardrail agent and return an approval decision."""
+    """Execute scope validation then the guardrail LLM agent.
+
+    Scope validation runs first (no LLM cost, < 1ms).
+    Only patches that pass scope validation proceed to the LLM guardrail.
+    """
     start_ms = int(time.time() * 1000)
+
+    # ── Pre-check: scope validation (fast, no LLM) ────────────────────────
+    scope_ok, scope_reason = validate_patch_scope(
+        file_path=triage.file_path,
+        diff=patch.diff,
+        patched_code=patch.patched_code,
+    )
+    if not scope_ok:
+        duration = int(time.time() * 1000) - start_ms
+        logger.warning(
+            "guardrail_scope_rejected",
+            file_path=triage.file_path,
+            reason=scope_reason[:200],
+            duration_ms=duration,
+        )
+        return GuardrailResult(
+            success=True,          # The check itself succeeded (no error)
+            approved=False,        # But the patch is rejected
+            notes=scope_reason,
+            rejection_reason=scope_reason,
+            duration_ms=duration,
+        )
 
     try:
         from crewai import Crew, Process
@@ -179,6 +289,7 @@ async def run_guardrail_agent(
             success=True,
             approved=approved,
             notes=notes,
+            rejection_reason=rejection if not approved else "",
             duration_ms=duration,
         )
 
