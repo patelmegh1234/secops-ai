@@ -19,7 +19,7 @@ from slowapi.util import get_remote_address
 
 from src.api.middleware.cors import add_cors_middleware
 from src.api.middleware.rate_limiter import limiter
-from src.api.routers import approvals, dashboard, health, webhooks
+from src.api.routers import approvals, dashboard, health, webhooks, workspaces
 from src.core.config import get_settings
 from src.core.logging import configure_logging, get_logger
 from src.database.connection import dispose_db, init_db
@@ -169,6 +169,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
     app.include_router(approvals.router, prefix="/slack", tags=["Slack"])
     app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
+    app.include_router(workspaces.router, prefix="/api", tags=["Workspaces"])
 
     # ── WebSocket Feed ────────────────────────────────────────────────────
     @app.websocket("/ws/feed")

@@ -2,6 +2,8 @@
 SQLAlchemy ORM models for SecOps-AI.
 
 Tables:
+  - workspaces        : Multi-tenant isolation unit
+  - api_keys          : Hashed API keys with rotation support
   - vulnerabilities   : Incoming CVE/SAST alert records
   - patches           : AI-generated code patches
   - sandbox_runs      : Docker sandbox execution results
@@ -95,7 +97,81 @@ class TimestampMixin:
     )
 
 
-# ─── Models ───────────────────────────────────────────────────────────────────
+# ─── Workspace & ApiKey (Phase 2.1 / 2.2) ────────────────────────────────────────
+
+class Workspace(Base, TimestampMixin):
+    """Multi-tenant isolation unit. Every vulnerability belongs to one workspace."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        "ApiKey", back_populates="workspace", cascade="all, delete-orphan"
+    )
+    vulnerabilities: Mapped[list["Vulnerability"]] = relationship(
+        "Vulnerability", back_populates="workspace"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Workspace {self.slug}>"
+
+
+class ApiKey(Base, TimestampMixin):
+    """Hashed API key with rotation support.
+
+    Rotation flow:
+      1. Generate new key → set hashed_key, bump last_rotated_at
+      2. Store previous hash in previous_key_hash for 24hr grace period
+      3. After grace period expires, previous_key_hash is cleared
+      4. Both hashed_key and previous_key_hash are checked on each request
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    key_prefix: Mapped[str] = mapped_column(
+        String(12), nullable=False, index=True
+    )  # First 8 chars of the raw key (for fast lookup without full scan)
+    hashed_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    previous_key_hash: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )  # Kept for 24hr rotation grace period
+
+    label: Mapped[str] = mapped_column(String(100), nullable=False, default="Default")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    last_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # None = never expires
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="api_keys")
+
+    def __repr__(self) -> str:
+        return f"<ApiKey {self.key_prefix}... for Workspace {self.workspace_id}>"
+
+
+# ─── Vulnerability & related ────────────────────────────────────────────────────
+
 class Vulnerability(Base, TimestampMixin):
     """Incoming security alert from a scanner (Trivy, Bandit, etc.)."""
 
@@ -165,7 +241,17 @@ class Vulnerability(Base, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Workspace isolation (Phase 2.1)
+    # Nullable for backwards-compat with single-tenant data already in DB.
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
+    workspace: Mapped["Workspace | None"] = relationship("Workspace", back_populates="vulnerabilities")
     patches: Mapped[list["Patch"]] = relationship(
         "Patch", back_populates="vulnerability", cascade="all, delete-orphan"
     )
