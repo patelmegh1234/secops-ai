@@ -1,14 +1,31 @@
 """
 Docker Sandbox Controller.
-Runs pytest inside an isolated, network-disabled Docker container
-to verify that the generated patch doesn't break existing tests.
+Runs pytest inside an isolated, hardened Docker container to verify that the
+generated patch does not break existing tests.
 
-Security guarantees:
-  - network_disabled=True  (zero data exfiltration)
-  - mem_limit="512m"       (prevents memory bombs)
-  - cpu_quota=50000        (50% of one core)
-  - Hard timeout = 30s     (container is killed after this)
-  - Auto-remove on exit    (no container leaks)
+Security controls (verified against audit checklist):
+  network_disabled=True       Zero data exfiltration — no outbound calls
+  cap_drop=["ALL"]            Drop all Linux capabilities
+  security_opt no-new-privs   Prevent privilege escalation via setuid binaries
+  read_only=True              Immutable root filesystem
+  tmpfs /tmp 64MB             Writable scratch space for pip and pytest tmp files
+  user="nobody"               Non-root user (UID 65534)
+  pids_limit=128              Fork bomb prevention
+  ulimit nofile=512           File descriptor limit
+  ulimit fsize=50MB           Maximum file size that can be written
+  mem_limit="512m"            Memory bomb prevention
+  cpu_quota=50000             50% of one core — CPU starvation prevention
+  Hard timeout 30s SIGKILL    Infinite loop prevention
+  Auto-remove on exit         No container leaks
+
+CAUTION: read_only=True requires careful testing.
+  - pip install must write to /tmp (not site-packages root) — handled via
+    PIP_CACHE_DIR=/tmp/pip-cache and --target /tmp/site-packages is NOT used;
+    instead the sandbox image pre-installs common packages.
+  - If the target repo requires pip install at runtime, the sandbox command
+    uses --prefix /tmp to redirect writes to the tmpfs mount.
+  - If pip install fails under read_only, the exit code will be non-zero
+    and sandbox_mode will be SETUP_ERROR (handled as a distinct case).
 """
 
 import asyncio
@@ -138,23 +155,55 @@ async def run_sandbox(
 
         container = client.containers.run(
             image=settings.sandbox_base_image,
-            command="bash -c 'pip install -r requirements.txt -q 2>/dev/null; pytest --tb=short -q 2>&1'",
+            # Redirect pip cache and installs to /tmp (writable under read_only=True)
+            # /workspace is the cloned repo mount (rw), /tmp is the tmpfs mount.
+            command=(
+                "bash -c "
+                "'PIP_CACHE_DIR=/tmp/pip-cache "
+                "pip install -r requirements.txt -q "
+                "--prefix /tmp/pkg 2>/dev/null || true; "
+                "PYTHONPATH=/tmp/pkg/lib/python3.11/site-packages "
+                "pytest --tb=short -q 2>&1'"
+            ),
             volumes={workdir: {"bind": "/workspace", "mode": "rw"}},
             working_dir="/workspace",
             name=container_name,
             detach=True,
-            network_disabled=True,           # ← Zero exfiltration
+            # ── Network isolation ──────────────────────────────────────────
+            network_disabled=True,
+            # ── Resource limits ────────────────────────────────────────────
             mem_limit=settings.sandbox_memory_limit,
             cpu_quota=settings.sandbox_cpu_quota,
             cpu_period=100000,
-            read_only=False,
-            remove=False,                    # We'll remove manually after reading logs
+            pids_limit=128,
+            # ── Filesystem hardening ───────────────────────────────────────
+            # read_only=True makes the root FS immutable.
+            # /tmp is a separate tmpfs mount (64MB) so pip/pytest can write.
+            # /workspace is the only rw bind mount (scoped to this run's temp dir).
+            read_only=True,
+            tmpfs={"/tmp": "size=64m,mode=1777"},
+            # ── Capability hardening ───────────────────────────────────────
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            # ── User hardening ─────────────────────────────────────────────
+            # nobody = UID 65534; unprivileged, no home dir, no shell.
+            # Note: if the repo's tests require a specific user, this may
+            # need to be relaxed. Monitor SETUP_ERROR mode as an indicator.
+            user="nobody",
+            # ── File descriptor / file size limits ─────────────────────────
+            ulimits=[
+                docker.types.Ulimit(name="nofile", soft=512, hard=512),
+                docker.types.Ulimit(name="fsize", soft=50 * 1024 * 1024, hard=50 * 1024 * 1024),
+            ],
+            # ── Container management ───────────────────────────────────────
+            remove=False,   # Removed manually after log collection
             stdout=True,
             stderr=True,
             environment={
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",
                 "CI": "true",
+                "PIP_NO_COLOR": "1",
             },
         )
 

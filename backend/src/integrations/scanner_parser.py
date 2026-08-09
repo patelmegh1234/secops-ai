@@ -13,6 +13,77 @@ from src.database.schemas import VulnerabilityCreate
 
 logger = get_logger(__name__)
 
+
+def extract_idempotency_fields(payload: dict[str, Any], scanner: str) -> dict[str, Any]:
+    """
+    Extract the minimal identity fields needed to compute a dedup key.
+
+    Each scanner puts the same information in different JSON locations.
+    This function normalises them into a flat dict with predictable keys:
+      cve_id, rule_id, repo_owner, repo_name, file_path, line_number
+
+    Used by webhooks.py to compute SHA-256 idempotency keys.
+    """
+    try:
+        if scanner == "TRIVY":
+            # Trivy JSON: {"Results": [{"Target": "...", "Vulnerabilities": [...]}]}
+            results = payload.get("Results", [])
+            if results and results[0].get("Vulnerabilities"):
+                vuln = results[0]["Vulnerabilities"][0]
+                return {
+                    "cve_id": vuln.get("VulnerabilityID", ""),
+                    "rule_id": None,
+                    "repo_owner": payload.get("repo_owner", ""),
+                    "repo_name": payload.get("repo_name", ""),
+                    "file_path": results[0].get("Target", ""),
+                    "line_number": None,
+                }
+        elif scanner == "BANDIT":
+            # Bandit JSON: {"results": [{"test_id": "B608", "filename": "...", "line_number": 42}]}
+            results = payload.get("results", [])
+            if results:
+                issue = results[0]
+                return {
+                    "cve_id": None,
+                    "rule_id": issue.get("test_id", ""),
+                    "repo_owner": payload.get("repo_owner", ""),
+                    "repo_name": payload.get("repo_name", ""),
+                    "file_path": issue.get("filename", ""),
+                    "line_number": issue.get("line_number"),
+                }
+        elif scanner == "GITHUB":
+            # GitHub dependabot_alert: {"alert": {"dependency": {...}, "security_advisory": {...}}}
+            alert = payload.get("alert", {})
+            advisory = alert.get("security_advisory", {})
+            identifiers = advisory.get("identifiers", [])
+            cve_id = next(
+                (i["value"] for i in identifiers if i.get("type") == "CVE"),
+                advisory.get("ghsa_id", ""),
+            )
+            repo = payload.get("repository", {})
+            full_name = repo.get("full_name", "/")
+            parts = full_name.split("/", 1)
+            return {
+                "cve_id": cve_id,
+                "rule_id": None,
+                "repo_owner": parts[0] if len(parts) > 0 else "",
+                "repo_name": parts[1] if len(parts) > 1 else "",
+                "file_path": alert.get("dependency", {}).get("manifest_path", ""),
+                "line_number": None,
+            }
+    except Exception:
+        pass  # Fall through to default
+    # Fallback: use a hash of the entire payload to guarantee uniqueness
+    return {
+        "cve_id": None,
+        "rule_id": None,
+        "repo_owner": payload.get("repo_owner", ""),
+        "repo_name": payload.get("repo_name", ""),
+        "file_path": str(hash(str(payload)))[:16],
+        "line_number": None,
+    }
+
+
 # ─── OWASP Top 10 keyword mapping ─────────────────────────────────────────────
 OWASP_KEYWORDS: dict[str, str] = {
     "sql": "A03:2021 - Injection",

@@ -40,14 +40,19 @@ def run_async(coro: Any) -> Any:
     default_retry_delay=5,
     queue="vulnerability",
 )
-def process_vulnerability(self: Task, payload: dict[str, Any], scanner: str) -> dict[str, Any]:
+def process_vulnerability(
+    self: Task,
+    payload: dict[str, Any],
+    scanner: str,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     """
     Full SecOps-AI pipeline:
-    1. Parse scanner payload → VulnerabilityCreate records
-    2. Persist to PostgreSQL (status=PENDING)
-    3. Run CrewAI multi-agent pipeline (triage → patch → guardrail)
+    1. Parse scanner payload -> VulnerabilityCreate records
+    2. Persist to PostgreSQL (status=PENDING, idempotency_key set)
+    3. Run CrewAI multi-agent pipeline (triage -> patch -> guardrail)
     4. Persist patch to DB
-    5. Execute Docker sandbox verification
+    5. Execute Docker sandbox verification (with trace-based retry)
     6. Update DB status
     7. Send Slack Block Kit notification with Approve/Reject buttons
     8. Publish real-time event to Redis pub/sub for dashboard
@@ -57,14 +62,17 @@ def process_vulnerability(self: Task, payload: dict[str, Any], scanner: str) -> 
     logger.info(f"[process_vulnerability] Starting pipeline for scanner={scanner}")
 
     try:
-        return run_async(_process_vulnerability_async(self, payload, scanner))
+        return run_async(_process_vulnerability_async(self, payload, scanner, idempotency_key))
     except Exception as exc:
         logger.error(f"[process_vulnerability] Pipeline failed: {exc}")
         raise self.retry(exc=exc)
 
 
 async def _process_vulnerability_async(
-    task: Task, payload: dict[str, Any], scanner: str
+    task: Task,
+    payload: dict[str, Any],
+    scanner: str,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     import redis.asyncio as aioredis
 
@@ -94,12 +102,13 @@ async def _process_vulnerability_async(
             vuln_id = vuln.id
             logger.info(f"[process_vulnerability] Created vulnerability {vuln_id}")
 
-            # Update status to TRIAGING
+            # Update status to TRIAGING and stamp idempotency key
             await crud.update_vulnerability(
                 db, vuln_id,
                 VulnerabilityUpdate(
                     status=VulnerabilityStatus.TRIAGING,
                     celery_task_id=task.request.id,
+                    idempotency_key=idempotency_key,
                 )
             )
 
