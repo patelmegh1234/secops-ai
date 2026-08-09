@@ -14,6 +14,7 @@ from crewai import Agent, Task
 from langchain_openai import ChatOpenAI
 
 from src.agents.patch_agent import PatchResult
+from src.agents.secret_scanner import scan_for_secrets
 from src.agents.triage_agent import TriageResult
 from src.agents.tools.owasp_checker import OWASPSecurityCheckerTool
 from src.core.config import get_settings
@@ -247,6 +248,29 @@ async def run_guardrail_agent(
             approved=False,        # But the patch is rejected
             notes=scope_reason,
             rejection_reason=scope_reason,
+            duration_ms=duration,
+        )
+
+    # ── Pre-check 2: Secret scan (fast, no LLM) ─────────────────────────────
+    # Detect hardcoded secrets in patched_code before the LLM sees it.
+    # A patch that fixes a SQL injection but embeds a Stripe key is
+    # still a failed patch.
+    secret_result = scan_for_secrets(patch.patched_code)
+    if not secret_result.clean:
+        duration = int(time.time() * 1000) - start_ms
+        rejection = secret_result.rejection_message()
+        logger.warning(
+            "guardrail_secret_detected",
+            file_path=triage.file_path,
+            secret_count=len(secret_result.matches),
+            patterns=[m.pattern_name for m in secret_result.matches[:3]],
+            duration_ms=duration,
+        )
+        return GuardrailResult(
+            success=True,
+            approved=False,
+            notes=rejection,
+            rejection_reason=rejection,
             duration_ms=duration,
         )
 

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -26,6 +26,56 @@ from src.database.connection import dispose_db, init_db
 
 settings = get_settings()
 logger = get_logger(__name__)
+
+# ── Payload Size Guard ────────────────────────────────────────────────────────
+# Reject webhook bodies larger than 1MB before JSON parsing.
+# Prevents memory exhaustion via crafted large payloads.
+_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+class MaxBodySizeMiddleware:
+    """ASGI middleware that enforces a hard cap on incoming request body size."""
+
+    def __init__(self, app: FastAPI, max_bytes: int = _MAX_BODY_BYTES) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            # Wrap receive to count bytes as they stream in
+            bytes_read = 0
+
+            async def checked_receive() -> dict:
+                nonlocal bytes_read
+                message = await receive()
+                body_chunk = message.get("body", b"")
+                bytes_read += len(body_chunk)
+                if bytes_read > self.max_bytes:
+                    logger.warning(
+                        "webhook_payload_too_large",
+                        bytes_received=bytes_read,
+                        max_bytes=self.max_bytes,
+                    )
+                    response = JSONResponse(
+                        status_code=413,
+                        content={
+                            "detail": (
+                                f"Request body exceeds the {self.max_bytes // 1024}KB limit. "
+                                "Split the payload into smaller batches."
+                            )
+                        },
+                    )
+                    await response(scope, receive, send)
+                    raise RuntimeError("body_too_large")  # Abort further processing
+                return message
+
+            try:
+                await self.app(scope, checked_receive, send)
+            except RuntimeError as exc:
+                if str(exc) != "body_too_large":
+                    raise
+        else:
+            await self.app(scope, receive, send)
 
 
 # ── WebSocket Connection Manager ──────────────────────────────────────────────
@@ -107,6 +157,8 @@ def create_app() -> FastAPI:
     # ── Middleware (order matters — outermost first) ───────────────────────
     add_cors_middleware(app)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    # Reject payloads > 1MB before JSON parsing (prevents memory exhaustion)
+    app.add_middleware(MaxBodySizeMiddleware, max_bytes=_MAX_BODY_BYTES)  # type: ignore
 
     # ── Rate Limiter ──────────────────────────────────────────────────────
     app.state.limiter = limiter

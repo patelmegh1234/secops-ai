@@ -52,8 +52,8 @@ async def list_incidents(
     request: Request,
     status: VulnerabilityStatus | None = Query(None, description="Filter by status"),
     severity: Severity | None = Query(None, description="Filter by severity"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100, description="Max rows per page (1-100)"),
+    offset: int = Query(0, ge=0, le=10000, description="Pagination offset (max 10,000)"),
     db: AsyncSession = Depends(get_db),
 ) -> VulnerabilityListResponse:
     """Paginated list of vulnerability incidents with optional filters."""
@@ -149,8 +149,8 @@ async def get_agent_traces(
 @limiter.limit("30/minute")
 async def get_audit_log(
     request: Request,
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100, description="Max rows per page (1-100)"),
+    offset: int = Query(0, ge=0, le=10000, description="Pagination offset (max 10,000)"),
     db: AsyncSession = Depends(get_db),
 ) -> VulnerabilityListResponse:
     total, items = await crud.list_vulnerabilities(db, limit=limit, offset=offset)

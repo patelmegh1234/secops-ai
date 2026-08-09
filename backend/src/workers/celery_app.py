@@ -34,7 +34,7 @@ celery_app.conf.update(
     task_max_retries=settings.celery_task_max_retries,
     task_default_retry_delay=settings.celery_task_retry_delay_seconds,
     # ── Result expiry ─────────────────────────────────────────────────────
-    result_expires=86400,          # 24 hours
+    result_expires=3600,           # 1 hour — results only needed briefly post-completion
     # ── Routing ───────────────────────────────────────────────────────────
     task_routes={
         "src.workers.tasks.process_vulnerability": {"queue": "vulnerability"},
