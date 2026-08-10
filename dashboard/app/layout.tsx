@@ -8,13 +8,28 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: {
-    default: "SecOps-AI | Incident Command Center",
-    template: "%s | SecOps-AI",
+    default: "GuardMind — Autonomous SecOps AI",
+    template: "%s | GuardMind",
   },
   description:
-    "Autonomous AI-powered security operations agent — real-time vulnerability triage, sandboxed patch verification, and human-in-the-loop GitHub PR creation.",
-  keywords: ["SecOps", "AI", "CVE", "vulnerability", "security", "DevSecOps", "automation"],
-  robots: "noindex, nofollow", // Internal tool — don't index
+    "GuardMind is an autonomous AI-powered security operations agent. Real-time CVE triage, sandboxed patch verification, and human-in-the-loop GitHub PR creation — all in one pipeline.",
+  keywords: [
+    "GuardMind",
+    "SecOps AI",
+    "CVE remediation",
+    "vulnerability patching",
+    "DevSecOps automation",
+    "AI security agent",
+    "Trivy",
+    "Bandit",
+  ],
+  openGraph: {
+    title: "GuardMind — Autonomous SecOps AI",
+    description:
+      "AI agent that automatically triages, patches, and verifies security vulnerabilities with human-in-the-loop approval.",
+    type: "website",
+  },
+  robots: "noindex, nofollow",
 };
 
 export default function RootLayout({
@@ -37,10 +52,7 @@ export default function RootLayout({
       </head>
       <body className={`${inter.variable} bg-bg-primary text-text-primary antialiased`}>
         <div className="flex h-screen overflow-hidden">
-          {/* Sidebar */}
           <Sidebar />
-
-          {/* Main content */}
           <div className="flex flex-col flex-1 overflow-hidden">
             <TopBar />
             <main className="flex-1 overflow-auto p-6 grid-pattern">

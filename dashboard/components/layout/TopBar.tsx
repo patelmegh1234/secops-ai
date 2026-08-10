@@ -1,15 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Wifi, WifiOff, Bell, FlaskConical } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Wifi, WifiOff, Bell, Search, HelpCircle } from "lucide-react";
 import { useRealtimeFeed } from "@/lib/websocket";
 import { clsx } from "clsx";
 
-const IS_DEMO = !process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+const IS_DEMO =
+  !process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+
+const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
+  "/dashboard": { title: "Command Center", subtitle: "Real-time vulnerability remediation pipeline" },
+  "/audit": { title: "Audit Log", subtitle: "Full remediation history & compliance export" },
+  "/integrations": { title: "Integrations", subtitle: "Connected scanners, SCM, and notification channels" },
+  "/settings": { title: "Settings", subtitle: "Workspace configuration & API key management" },
+};
 
 export function TopBar() {
+  const pathname = usePathname();
   const [currentTime, setCurrentTime] = useState<string>("");
   const [notificationCount, setNotificationCount] = useState(0);
+
+  const pageInfo = PAGE_TITLES[pathname] ?? {
+    title: "GuardMind",
+    subtitle: "Autonomous SecOps Agent",
+  };
 
   const { connected, lastEvent, reconnectCount } = useRealtimeFeed({
     onMessage: (event) => {
@@ -36,68 +51,92 @@ export function TopBar() {
   }, []);
 
   return (
-    <header className="h-14 bg-bg-tertiary border-b border-border-subtle flex items-center justify-between px-6 flex-shrink-0 glass">
-      {/* Left: breadcrumb / title */}
+    <header className="h-14 bg-bg-tertiary border-b border-border-subtle flex items-center justify-between px-6 flex-shrink-0">
+      {/* Left: page title */}
       <div className="flex items-center gap-3">
-        <span className="text-sm font-mono text-text-muted hidden sm:block">
-          secops-ai
-        </span>
-        <span className="text-text-muted hidden sm:block">/</span>
-        <span className="text-sm font-mono text-text-primary">
-          incident-command-center
-        </span>
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary leading-tight">
+            {pageInfo.title}
+          </h2>
+          <p className="text-[10px] text-text-muted font-mono leading-tight hidden sm:block">
+            {pageInfo.subtitle}
+          </p>
+        </div>
       </div>
 
-      {/* Right: status indicators */}
-      <div className="flex items-center gap-4">
-        {/* Real-time clock */}
-        <div className="font-mono text-xs text-text-muted tabular-nums hidden sm:block">
-          {currentTime}
-          <span className="animate-blink ml-0.5 text-accent-cyan">|</span>
-        </div>
-
-        {/* Last event (live mode only) */}
+      {/* Right: controls */}
+      <div className="flex items-center gap-3">
+        {/* Live event ticker */}
         {!IS_DEMO && lastEvent && lastEvent.type === "vulnerability_update" && (
-          <div className="flex items-center gap-1.5 animate-slide-in">
-            <span className="status-dot active" />
-            <span className="text-xs font-mono text-accent-emerald max-w-[200px] truncate">
-              {lastEvent.severity}: {lastEvent.title?.slice(0, 30)}
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent-emerald/10 border border-accent-emerald/20 animate-fade-in">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-emerald animate-pulse" />
+            <span className="text-[10px] font-mono text-accent-emerald max-w-[160px] truncate">
+              {lastEvent.severity}: {lastEvent.title?.slice(0, 28)}
             </span>
           </div>
         )}
 
-        {/* Notification bell (live mode only) */}
-        {!IS_DEMO && notificationCount > 0 && (
-          <button
-            onClick={() => setNotificationCount(0)}
-            className="relative text-text-muted hover:text-text-primary transition-colors"
-            title={`${notificationCount} new events`}
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent-rose text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+        {/* Clock */}
+        <div className="font-mono text-xs text-text-muted tabular-nums hidden md:block">
+          {currentTime}
+          <span className="animate-blink ml-0.5 text-accent-cyan/50">|</span>
+        </div>
+
+        {/* Search */}
+        <button className="p-1.5 text-text-muted hover:text-text-secondary transition-colors rounded-md hover:bg-bg-hover" title="Search (coming soon)">
+          <Search className="w-4 h-4" />
+        </button>
+
+        {/* Notifications */}
+        <button
+          onClick={() => setNotificationCount(0)}
+          className="relative p-1.5 text-text-muted hover:text-text-secondary transition-colors rounded-md hover:bg-bg-hover"
+          title={notificationCount > 0 ? `${notificationCount} new events` : "No new events"}
+        >
+          <Bell className="w-4 h-4" />
+          {notificationCount > 0 && (
+            <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-accent-rose text-white text-[8px] font-bold rounded-full flex items-center justify-center">
               {notificationCount > 9 ? "9+" : notificationCount}
             </span>
-          </button>
-        )}
+          )}
+        </button>
+
+        {/* Help */}
+        <button className="p-1.5 text-text-muted hover:text-text-secondary transition-colors rounded-md hover:bg-bg-hover" title="Documentation">
+          <HelpCircle className="w-4 h-4" />
+        </button>
 
         {/* Connection status */}
-        <div className="flex items-center gap-1.5">
+        <div
+          className={clsx(
+            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[10px] font-mono",
+            IS_DEMO
+              ? "bg-bg-secondary border-border-subtle text-text-muted"
+              : connected
+              ? "bg-accent-emerald/10 border-accent-emerald/20 text-accent-emerald"
+              : "bg-accent-rose/10 border-accent-rose/20 text-accent-rose"
+          )}
+        >
+          <span
+            className={clsx(
+              "w-1.5 h-1.5 rounded-full",
+              IS_DEMO
+                ? "bg-text-muted"
+                : connected
+                ? "bg-accent-emerald animate-pulse"
+                : "bg-accent-rose"
+            )}
+          />
           {IS_DEMO ? (
-            <>
-              <FlaskConical className="w-3.5 h-3.5 text-accent-amber" />
-              <span className="text-xs font-mono text-accent-amber">DEMO</span>
-            </>
+            <span>Preview</span>
           ) : connected ? (
-            <>
-              <Wifi className="w-3.5 h-3.5 text-accent-emerald" />
-              <span className="text-xs font-mono text-accent-emerald">LIVE</span>
-            </>
+            <span>Live</span>
           ) : (
             <>
-              <WifiOff className="w-3.5 h-3.5 text-accent-rose" />
-              <span className="text-xs font-mono text-accent-rose">
-                {reconnectCount > 0 ? `RETRY #${reconnectCount}` : "OFFLINE"}
-              </span>
+              {!connected && (
+                <WifiOff className="w-3 h-3" />
+              )}
+              <span>{reconnectCount > 0 ? `Retry #${reconnectCount}` : "Offline"}</span>
             </>
           )}
         </div>

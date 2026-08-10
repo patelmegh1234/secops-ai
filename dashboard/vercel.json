@@ -2,7 +2,6 @@
   "version": 2,
   "name": "secops-ai-dashboard",
   "buildCommand": "npm run build",
-  "outputDirectory": ".next",
   "installCommand": "npm install",
   "framework": "nextjs",
   "regions": ["sin1"],
