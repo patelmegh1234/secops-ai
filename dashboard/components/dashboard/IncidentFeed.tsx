@@ -6,7 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import { clsx } from "clsx";
 import { SeverityBadge, StatusBadge } from "@/components/ui/StatusBadge";
 import { useRealtimeFeed } from "@/lib/websocket";
-import { listIncidents } from "@/lib/api";
+import { listIncidents, IS_UNCONFIGURED } from "@/lib/api";
 import type { Vulnerability, WsEvent } from "@/lib/types";
 import {
   ExternalLink,
@@ -14,10 +14,9 @@ import {
   ChevronRight,
   Bug,
   Package,
+  ServerOff,
+  Inbox,
 } from "lucide-react";
-
-const IS_DEMO =
-  !process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 const SEVERITY_PRIORITY: Record<string, number> = {
   CRITICAL: 0,
@@ -26,7 +25,6 @@ const SEVERITY_PRIORITY: Record<string, number> = {
   LOW: 3,
 };
 
-// Pipeline stage ordering for secondary sort
 const STATUS_PRIORITY: Record<string, number> = {
   TRIAGING: 0,
   PATCHING: 1,
@@ -42,11 +40,9 @@ function sortIncidents(items: Vulnerability[]): Vulnerability[] {
     const sevA = SEVERITY_PRIORITY[a.severity] ?? 99;
     const sevB = SEVERITY_PRIORITY[b.severity] ?? 99;
     if (sevA !== sevB) return sevA - sevB;
-
     const staA = STATUS_PRIORITY[a.status] ?? 99;
     const staB = STATUS_PRIORITY[b.status] ?? 99;
     if (staA !== staB) return staA - staB;
-
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
 }
@@ -72,24 +68,28 @@ interface IncidentFeedProps {
   className?: string;
 }
 
+type FeedState = "loading" | "offline" | "empty" | "data";
+
 export function IncidentFeed({ className }: IncidentFeedProps) {
   const [incidents, setIncidents] = useState<Vulnerability[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [feedState, setFeedState] = useState<FeedState>("loading");
   const [refreshing, setRefreshing] = useState(false);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
 
   const fetchIncidents = async (quiet = false) => {
-    if (!quiet) setLoading(true);
+    if (!quiet) setFeedState("loading");
     else setRefreshing(true);
-    try {
-      const data = await listIncidents({ limit: 20 });
+
+    const data = await listIncidents({ limit: 20 });
+
+    if (IS_UNCONFIGURED || data.total === 0) {
+      setIncidents([]);
+      setFeedState(IS_UNCONFIGURED ? "offline" : "empty");
+    } else {
       setIncidents(sortIncidents(data.items));
-    } catch (e) {
-      console.error("Failed to load incidents", e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setFeedState("data");
     }
+    setRefreshing(false);
   };
 
   useEffect(() => {
@@ -103,22 +103,32 @@ export function IncidentFeed({ className }: IncidentFeedProps) {
         setTimeout(() => fetchIncidents(true), 500);
       }
     },
-    enabled: !IS_DEMO,
+    enabled: !IS_UNCONFIGURED,
   });
 
-  if (loading) {
+  // ── Skeleton loader ─────────────────────────────────────────────────────────
+  if (feedState === "loading") {
     return (
       <div className={clsx("card p-0 overflow-hidden", className)}>
         <div className="px-4 py-3 border-b border-border-subtle flex items-center gap-2">
           <div className="h-4 bg-bg-hover rounded w-28 animate-pulse" />
         </div>
         <div className="divide-y divide-border-subtle">
-          {[...Array(6)].map((_, i) => (
+          {[...Array(5)].map((_, i) => (
             <div key={i} className="px-4 py-3 flex items-start gap-3">
-              <div className="w-10 h-10 bg-bg-hover rounded-lg animate-pulse flex-shrink-0" style={{ opacity: 1 - i * 0.12 }} />
-              <div className="flex-1 space-y-2">
-                <div className="h-3 bg-bg-hover rounded w-3/4 animate-pulse" style={{ opacity: 1 - i * 0.12 }} />
-                <div className="h-2.5 bg-bg-hover rounded w-1/2 animate-pulse" style={{ opacity: 1 - i * 0.12 }} />
+              <div
+                className="w-8 h-8 bg-bg-hover rounded-lg animate-pulse flex-shrink-0"
+                style={{ opacity: 1 - i * 0.15 }}
+              />
+              <div className="flex-1 space-y-2 py-1">
+                <div
+                  className="h-3 bg-bg-hover rounded w-3/4 animate-pulse"
+                  style={{ opacity: 1 - i * 0.15 }}
+                />
+                <div
+                  className="h-2.5 bg-bg-hover rounded w-1/2 animate-pulse"
+                  style={{ opacity: 1 - i * 0.15 }}
+                />
               </div>
             </div>
           ))}
@@ -132,11 +142,22 @@ export function IncidentFeed({ className }: IncidentFeedProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-accent-emerald animate-pulse" />
-          <span className="text-sm font-semibold text-text-primary">Live Incident Feed</span>
-          <span className="text-[10px] font-mono text-text-muted bg-bg-secondary border border-border-subtle px-1.5 py-0.5 rounded-full">
-            {incidents.length}
+          <span
+            className={clsx(
+              "w-2 h-2 rounded-full",
+              feedState === "data"
+                ? "bg-accent-emerald animate-pulse"
+                : "bg-text-muted"
+            )}
+          />
+          <span className="text-sm font-semibold text-text-primary">
+            Live Incident Feed
           </span>
+          {feedState === "data" && (
+            <span className="text-[10px] font-mono text-text-muted bg-bg-secondary border border-border-subtle px-1.5 py-0.5 rounded-full">
+              {incidents.length}
+            </span>
+          )}
         </div>
         <button
           onClick={() => fetchIncidents(true)}
@@ -145,109 +166,139 @@ export function IncidentFeed({ className }: IncidentFeedProps) {
             refreshing && "animate-spin text-accent-cyan"
           )}
           title="Refresh"
-          disabled={refreshing}
+          disabled={refreshing || feedState === "offline"}
         >
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* Column headers */}
-      <div className="grid grid-cols-[1fr_auto] px-4 py-2 border-b border-border-subtle bg-bg-tertiary/50">
-        <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Incident</span>
-        <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Status</span>
-      </div>
-
-      {/* Feed rows */}
-      <div className="divide-y divide-border-subtle overflow-auto max-h-[520px]">
-        {incidents.length === 0 ? (
-          <div className="text-center py-16 text-text-muted">
-            <div className="text-3xl mb-3">🛡️</div>
-            <p className="text-sm font-semibold">No incidents detected</p>
-            <p className="text-xs font-mono mt-1">Waiting for webhook triggers...</p>
+      {/* ── Offline state ─────────────────────────────────────────────────── */}
+      {feedState === "offline" && (
+        <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-bg-secondary border border-border-subtle flex items-center justify-center">
+            <ServerOff className="w-5 h-5 text-text-muted" />
           </div>
-        ) : (
-          incidents.map((incident) => {
-            const isNew = newIds.has(incident.id);
-            const isCritical = incident.severity === "CRITICAL";
+          <div>
+            <p className="text-sm font-semibold text-text-primary">Backend not connected</p>
+            <p className="text-xs text-text-muted mt-1 max-w-xs leading-relaxed">
+              Set <code className="font-mono text-accent-cyan text-[11px]">NEXT_PUBLIC_API_URL</code> in
+              your Vercel environment to start ingesting real vulnerabilities.
+            </p>
+          </div>
+          <Link
+            href="/review/a1b2c3d4-0000-0000-0000-000000000001"
+            className="text-xs font-mono text-accent-cyan border border-accent-cyan/30 px-3 py-1.5 rounded-lg hover:bg-accent-cyan/10 transition-colors"
+          >
+            View demo incident →
+          </Link>
+        </div>
+      )}
 
-            return (
-              <Link
-                key={incident.id}
-                href={`/review/${incident.id}`}
-                className={clsx(
-                  "flex items-start gap-3 px-4 py-3.5 hover:bg-bg-hover transition-all duration-150 group block",
-                  isNew && "animate-fade-in bg-accent-cyan/3",
-                  isCritical && "border-l-2 border-accent-rose"
-                )}
-              >
-                {/* Severity icon column */}
-                <div
+      {/* ── Empty state (backend connected, no incidents yet) ─────────────── */}
+      {feedState === "empty" && (
+        <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-bg-secondary border border-border-subtle flex items-center justify-center">
+            <Inbox className="w-5 h-5 text-text-muted" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-text-primary">No incidents yet</p>
+            <p className="text-xs text-text-muted mt-1 max-w-xs leading-relaxed">
+              Point your Trivy or Bandit webhook to the backend to start
+              ingesting vulnerabilities.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Column headers ────────────────────────────────────────────────── */}
+      {feedState === "data" && (
+        <>
+          <div className="grid grid-cols-[1fr_auto] px-4 py-2 border-b border-border-subtle bg-bg-tertiary/50">
+            <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+              Incident
+            </span>
+            <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+              Status
+            </span>
+          </div>
+
+          <div className="divide-y divide-border-subtle overflow-auto max-h-[520px]">
+            {incidents.map((incident) => {
+              const isNew = newIds.has(incident.id);
+              const isCritical = incident.severity === "CRITICAL";
+
+              return (
+                <Link
+                  key={incident.id}
+                  href={`/review/${incident.id}`}
                   className={clsx(
-                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold font-mono border",
-                    incident.severity === "CRITICAL"
-                      ? "bg-accent-rose/15 border-accent-rose/30 text-accent-rose"
-                      : incident.severity === "HIGH"
-                      ? "bg-red-900/20 border-red-400/25 text-red-400"
-                      : incident.severity === "MEDIUM"
-                      ? "bg-accent-amber/15 border-accent-amber/25 text-accent-amber"
-                      : "bg-accent-cyan/10 border-accent-cyan/20 text-accent-cyan"
+                    "flex items-start gap-3 px-4 py-3.5 hover:bg-bg-hover transition-all duration-150 group block",
+                    isNew && "animate-fade-in bg-accent-cyan/3",
+                    isCritical && "border-l-2 border-accent-rose"
                   )}
                 >
-                  {incident.severity[0]}
-                </div>
+                  {/* Severity letter */}
+                  <div
+                    className={clsx(
+                      "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold font-mono border",
+                      incident.severity === "CRITICAL"
+                        ? "bg-accent-rose/15 border-accent-rose/30 text-accent-rose"
+                        : incident.severity === "HIGH"
+                        ? "bg-red-900/20 border-red-400/25 text-red-400"
+                        : incident.severity === "MEDIUM"
+                        ? "bg-accent-amber/15 border-accent-amber/25 text-accent-amber"
+                        : "bg-accent-cyan/10 border-accent-cyan/20 text-accent-cyan"
+                    )}
+                  >
+                    {incident.severity[0]}
+                  </div>
 
-                {/* Main content */}
-                <div className="flex-1 min-w-0">
-                  {/* Top line: badges */}
-                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                    <ScannerBadge scanner={incident.scanner} />
-                    <span className="text-[10px] font-mono text-text-muted">
-                      {incident.cve_id}
-                    </span>
-                    {isNew && (
-                      <span className="text-[9px] font-mono text-accent-cyan bg-accent-cyan/10 border border-accent-cyan/20 px-1.5 py-0.5 rounded-full uppercase">
-                        New
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <ScannerBadge scanner={incident.scanner} />
+                      <span className="text-[10px] font-mono text-text-muted">
+                        {incident.cve_id}
                       </span>
-                    )}
-                  </div>
-
-                  {/* Title */}
-                  <p className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors leading-tight line-clamp-1">
-                    {incident.title}
-                  </p>
-
-                  {/* Repo + time */}
-                  <div className="flex items-center gap-2.5 mt-1">
-                    <span className="text-[10px] text-text-muted font-mono">
-                      {incident.repo_owner}/{incident.repo_name}
-                    </span>
-                    {incident.file_path && (
-                      <>
-                        <span className="text-text-muted/40">·</span>
-                        <span className="text-[10px] text-text-muted font-mono truncate max-w-[120px]">
-                          {incident.file_path.split("/").pop()}
+                      {isNew && (
+                        <span className="text-[9px] font-mono text-accent-cyan bg-accent-cyan/10 border border-accent-cyan/20 px-1.5 py-0.5 rounded-full uppercase">
+                          New
                         </span>
-                      </>
-                    )}
-                    <span className="text-text-muted/40">·</span>
-                    <span className="text-[10px] text-text-muted">
-                      {formatDistanceToNow(new Date(incident.created_at), {
-                        addSuffix: true,
-                      })}
-                    </span>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors leading-tight line-clamp-1">
+                      {incident.title}
+                    </p>
+                    <div className="flex items-center gap-2.5 mt-1">
+                      <span className="text-[10px] text-text-muted font-mono">
+                        {incident.repo_owner}/{incident.repo_name}
+                      </span>
+                      {incident.file_path && (
+                        <>
+                          <span className="text-text-muted/40">·</span>
+                          <span className="text-[10px] text-text-muted font-mono truncate max-w-[120px]">
+                            {incident.file_path.split("/").pop()}
+                          </span>
+                        </>
+                      )}
+                      <span className="text-text-muted/40">·</span>
+                      <span className="text-[10px] text-text-muted">
+                        {formatDistanceToNow(new Date(incident.created_at), {
+                          addSuffix: true,
+                        })}
+                      </span>
+                    </div>
                   </div>
-                </div>
 
-                {/* Status + arrow */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <StatusBadge status={incident.status} />
-                  <ChevronRight className="w-3.5 h-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              </Link>
-            );
-          })
-        )}
-      </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <StatusBadge status={incident.status} />
+                    <ChevronRight className="w-3.5 h-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

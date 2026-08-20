@@ -3,11 +3,27 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 interface SandboxGaugeProps {
-  passRate: number; // 0.0 – 1.0
+  passRate: number | null; // 0.0 – 1.0, or null when backend offline
   className?: string;
 }
 
 export function SandboxGauge({ passRate, className }: SandboxGaugeProps) {
+  // Offline / unconfigured state
+  if (passRate === null) {
+    return (
+      <div className={`card ${className || ""}`}>
+        <div className="mb-2">
+          <h3 className="text-sm font-semibold text-text-primary">Sandbox Pass Rate</h3>
+          <p className="text-xs text-text-muted">Docker test verification</p>
+        </div>
+        <div className="flex flex-col items-center justify-center gap-2 py-10">
+          <span className="text-2xl font-bold font-mono text-text-muted">—</span>
+          <span className="text-xs text-text-muted font-mono">No data yet</span>
+        </div>
+      </div>
+    );
+  }
+
   const passed = Math.round(passRate * 100);
   const failed = 100 - passed;
 

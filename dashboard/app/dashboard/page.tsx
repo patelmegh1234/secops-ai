@@ -6,14 +6,15 @@ import {
   Zap,
   ShieldCheck,
   TrendingDown,
-  TrendingUp,
+  ServerOff,
+  ExternalLink,
 } from "lucide-react";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { IncidentFeed } from "@/components/dashboard/IncidentFeed";
 import { MTTRChart } from "@/components/dashboard/MTTRChart";
 import { SandboxGauge } from "@/components/dashboard/SandboxGauge";
 import { PipelineStatusBar } from "@/components/dashboard/PipelineStatusBar";
-import { getMetrics } from "@/lib/api";
+import { getMetrics, IS_UNCONFIGURED } from "@/lib/api";
 
 export const metadata: Metadata = {
   title: "Command Center",
@@ -24,48 +25,79 @@ export const metadata: Metadata = {
 export const revalidate = 30;
 
 export default async function DashboardPage() {
-  let metrics = {
-    active_incidents: 0,
-    total_today: 0,
-    sandbox_pass_rate: 0,
-    prs_opened_today: 0,
-    mean_time_to_remediate_seconds: 0,
-    critical_count: 0,
-    high_count: 0,
-    medium_count: 0,
-  };
+  const metrics = await getMetrics(); // null when backend unavailable
+  const backendOffline = metrics === null;
 
-  try {
-    metrics = await getMetrics();
-  } catch {
-    // Gracefully degrade — show zeros / demo data if backend is offline
-  }
-
-  const mttrMinutes = Math.round(metrics.mean_time_to_remediate_seconds / 60);
+  // Only compute display values from real data — never from fabricated defaults
+  const mttrSeconds = metrics?.mean_time_to_remediate_seconds ?? 0;
+  const mttrMinutes = Math.round(mttrSeconds / 60);
   const mttrDisplay =
-    mttrMinutes === 0
-      ? "< 1m"
+    mttrSeconds === 0
+      ? "—"
       : mttrMinutes < 60
       ? `${mttrMinutes}m`
       : `${Math.round(mttrMinutes / 60)}h ${mttrMinutes % 60}m`;
 
-  const sandboxPct = Math.round(metrics.sandbox_pass_rate * 100);
-  const totalThreats = metrics.critical_count + metrics.high_count + metrics.medium_count;
+  const sandboxPct =
+    metrics ? Math.round(metrics.sandbox_pass_rate * 100) : null;
+
+  const totalThreats =
+    metrics
+      ? (metrics.critical_count ?? 0) + (metrics.high_count ?? 0) + (metrics.medium_count ?? 0)
+      : null;
 
   return (
     <div className="space-y-5 animate-fade-in">
-      {/* ── Critical alert banner ──────────────────────────────────────────── */}
-      {metrics.critical_count > 0 && (
+
+      {/* ── Backend offline banner ─────────────────────────────────────────── */}
+      {backendOffline && (
+        <div className="flex items-start gap-4 p-4 rounded-xl bg-bg-secondary border border-border-subtle">
+          <div className="w-9 h-9 rounded-lg bg-bg-tertiary border border-border-subtle flex items-center justify-center flex-shrink-0 mt-0.5">
+            <ServerOff className="w-4 h-4 text-text-muted" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-text-primary">
+              {IS_UNCONFIGURED
+                ? "Backend not configured"
+                : "Backend unreachable"}
+            </p>
+            <p className="text-xs text-text-muted mt-0.5 leading-relaxed">
+              {IS_UNCONFIGURED
+                ? "Set NEXT_PUBLIC_API_URL in your Vercel environment variables to connect to a live backend."
+                : "The configured backend URL is not responding. Check your Railway service is running."}
+            </p>
+            <a
+              href="https://github.com/patelmegh1234/secops-ai#deployment"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 mt-2 text-xs font-mono text-accent-cyan hover:underline"
+            >
+              <ExternalLink className="w-3 h-3" />
+              Setup guide
+            </a>
+          </div>
+          {/* Demo review link — the one demo incident still works */}
+          <a
+            href="/review/a1b2c3d4-0000-0000-0000-000000000001"
+            className="flex-shrink-0 text-xs font-mono text-text-muted border border-border-subtle px-2.5 py-1.5 rounded-lg hover:border-accent-cyan/30 hover:text-text-secondary transition-colors"
+          >
+            View demo incident →
+          </a>
+        </div>
+      )}
+
+      {/* ── Critical alert banner (real data only) ────────────────────────── */}
+      {metrics && (metrics.critical_count ?? 0) > 0 && (
         <div className="flex items-center gap-3 p-3.5 rounded-xl bg-accent-rose/5 border border-accent-rose/25 animate-fade-in">
           <div className="w-7 h-7 rounded-lg bg-accent-rose/15 border border-accent-rose/30 flex items-center justify-center flex-shrink-0">
             <AlertTriangle className="w-3.5 h-3.5 text-accent-rose" />
           </div>
           <div className="flex-1">
             <span className="text-sm font-semibold text-accent-rose">
-              {metrics.critical_count} Critical{" "}
-              {metrics.critical_count === 1 ? "vulnerability" : "vulnerabilities"} active
+              {metrics.critical_count}{" "}
+              {metrics.critical_count === 1 ? "critical vulnerability" : "critical vulnerabilities"} active
             </span>
-            {metrics.high_count > 0 && (
+            {(metrics.high_count ?? 0) > 0 && (
               <span className="text-sm text-text-muted ml-2">
                 · {metrics.high_count} High
               </span>
@@ -81,39 +113,31 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
           title="Active Incidents"
-          value={metrics.active_incidents}
-          subtitle="In pipeline now"
+          value={metrics ? metrics.active_incidents : "—"}
+          subtitle={backendOffline ? "Backend offline" : "In pipeline now"}
           icon={Activity}
           variant="rose"
-          trend={
-            metrics.active_incidents > 0
-              ? { value: -12, label: "vs yesterday" }
-              : undefined
-          }
         />
         <MetricCard
           title="Ingested Today"
-          value={metrics.total_today}
-          subtitle="Vulnerabilities detected"
+          value={metrics ? metrics.total_today : "—"}
+          subtitle={backendOffline ? "Backend offline" : "Vulnerabilities detected"}
           icon={AlertTriangle}
           variant="amber"
-          trend={{ value: 8, label: "vs yesterday" }}
         />
         <MetricCard
           title="Avg MTTR"
           value={mttrDisplay}
-          subtitle="Mean time to remediate"
+          subtitle={backendOffline ? "Backend offline" : "Mean time to remediate"}
           icon={Zap}
           variant="cyan"
-          trend={{ value: -18, label: "improvement" }}
         />
         <MetricCard
           title="PRs Opened"
-          value={metrics.prs_opened_today}
-          subtitle="Auto-patches merged"
+          value={metrics ? metrics.prs_opened_today : "—"}
+          subtitle={backendOffline ? "Backend offline" : "Auto-patches merged"}
           icon={GitPullRequest}
           variant="emerald"
-          trend={{ value: 22, label: "vs yesterday" }}
         />
       </div>
 
@@ -124,7 +148,9 @@ export default async function DashboardPage() {
             <ShieldCheck className="w-4 h-4 text-accent-emerald" />
           </div>
           <div>
-            <p className="text-xl font-bold font-mono text-accent-emerald">{sandboxPct}%</p>
+            <p className="text-xl font-bold font-mono text-accent-emerald">
+              {sandboxPct !== null ? `${sandboxPct}%` : "—"}
+            </p>
             <p className="text-xs text-text-muted">Sandbox pass rate</p>
           </div>
         </div>
@@ -134,14 +160,16 @@ export default async function DashboardPage() {
             <AlertTriangle className="w-4 h-4 text-accent-rose" />
           </div>
           <div>
-            <p className="text-xl font-bold font-mono text-text-primary">{totalThreats}</p>
+            <p className="text-xl font-bold font-mono text-text-primary">
+              {totalThreats !== null ? totalThreats : "—"}
+            </p>
             <p className="text-xs text-text-muted">
-              Open threats{" "}
-              {metrics.critical_count > 0 && (
-                <span className="text-accent-rose">{metrics.critical_count}C</span>
-              )}{" "}
-              {metrics.high_count > 0 && (
-                <span className="text-red-400">{metrics.high_count}H</span>
+              Open threats
+              {metrics && (metrics.critical_count ?? 0) > 0 && (
+                <span className="text-accent-rose ml-1">{metrics.critical_count}C</span>
+              )}
+              {metrics && (metrics.high_count ?? 0) > 0 && (
+                <span className="text-red-400 ml-1">{metrics.high_count}H</span>
               )}
             </p>
           </div>
@@ -153,7 +181,9 @@ export default async function DashboardPage() {
           </div>
           <div>
             <p className="text-xl font-bold font-mono text-accent-cyan">
-              ${((metrics.prs_opened_today || 11) * 0.034).toFixed(2)}
+              {metrics
+                ? `$${(metrics.prs_opened_today * 0.034).toFixed(2)}`
+                : "—"}
             </p>
             <p className="text-xs text-text-muted">AI cost today</p>
           </div>
@@ -161,18 +191,15 @@ export default async function DashboardPage() {
       </div>
 
       {/* ── Pipeline stage summary ─────────────────────────────────────────── */}
-      <PipelineStatusBar />
+      <PipelineStatusBar backendOffline={backendOffline} />
 
       {/* ── Main content grid ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* Left: Incident Feed (2/3) */}
         <div className="xl:col-span-2">
           <IncidentFeed />
         </div>
-
-        {/* Right: Charts (1/3) */}
         <div className="space-y-4">
-          <SandboxGauge passRate={metrics.sandbox_pass_rate} />
+          <SandboxGauge passRate={metrics?.sandbox_pass_rate ?? null} />
           <MTTRChart />
         </div>
       </div>

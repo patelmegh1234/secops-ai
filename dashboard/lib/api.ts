@@ -1,8 +1,14 @@
 /**
- * Backend API client with typed methods, error handling, and demo mode fallback.
- * When NEXT_PUBLIC_API_URL is not set or the backend is unreachable,
- * the client automatically returns realistic demo data so Vercel deployments
- * look fully functional without a live backend.
+ * Backend API client.
+ *
+ * Behaviour by configuration:
+ *   - NEXT_PUBLIC_API_URL set   → calls the real backend; throws on failure
+ *   - NEXT_PUBLIC_API_URL unset → immediately throws ApiError(503) so callers
+ *     can render honest empty states instead of fabricated numbers.
+ *
+ * Demo/review data is kept ONLY for the /review/[id] detail page so the
+ * single pre-wired demo incident remains explorable. All KPI surfaces
+ * (metrics, incident lists, audit log) show real data or an empty state.
  */
 
 import type {
@@ -16,18 +22,16 @@ import type {
   Severity,
 } from "./types";
 
-import {
-  DEMO_METRICS,
-  DEMO_INCIDENTS,
-  DEMO_PATCH,
-  DEMO_SANDBOX,
-  DEMO_TRACES,
-} from "./demo-data";
+import { DEMO_INCIDENTS, DEMO_PATCH, DEMO_SANDBOX, DEMO_TRACES } from "./demo-data";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
 
-const IS_DEMO = !API_BASE || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+/** True when no backend URL is configured at all */
+export const IS_UNCONFIGURED = !API_BASE;
+
+/** True when URL is set but we haven't confirmed connectivity yet */
+export const IS_CONFIGURED = !!API_BASE;
 
 export class ApiError extends Error {
   constructor(
@@ -45,10 +49,11 @@ async function apiFetch<T>(
   options?: RequestInit,
   revalidate: number = 30
 ): Promise<T> {
-  if (IS_DEMO) {
-    // Simulate network latency in demo mode
-    await new Promise((r) => setTimeout(r, 100));
-    throw new ApiError(503, "Demo mode — backend not configured");
+  if (IS_UNCONFIGURED) {
+    throw new ApiError(
+      503,
+      "Backend not configured — set NEXT_PUBLIC_API_URL to connect."
+    );
   }
 
   const url = `${API_BASE}${path}`;
@@ -74,16 +79,18 @@ async function apiFetch<T>(
   return response.json() as Promise<T>;
 }
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────
-export async function getMetrics(): Promise<DashboardMetrics> {
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+// Returns null when backend is unavailable — callers render empty state.
+export async function getMetrics(): Promise<DashboardMetrics | null> {
   try {
     return await apiFetch<DashboardMetrics>("/api/metrics", undefined, 10);
   } catch {
-    return DEMO_METRICS;
+    return null;
   }
 }
 
-// ─── Incidents ──────────────────────────────────────────────────────────────
+// ─── Incidents ────────────────────────────────────────────────────────────────
+// Returns empty list when backend is unavailable — no fake data injected.
 export async function listIncidents(params?: {
   status?: VulnerabilityStatus;
   severity?: Severity;
@@ -99,25 +106,19 @@ export async function listIncidents(params?: {
     const query = qs.toString() ? `?${qs}` : "";
     return await apiFetch<VulnerabilityListResponse>(`/api/incidents${query}`, undefined, 0);
   } catch {
-    let items = DEMO_INCIDENTS;
-    if (params?.severity) {
-      items = items.filter((i) => i.severity === params.severity);
-    }
-    if (params?.status) {
-      items = items.filter((i) => i.status === params.status);
-    }
-    const limit = params?.limit ?? 20;
-    const offset = params?.offset ?? 0;
-    return { total: items.length, items: items.slice(offset, offset + limit) };
+    return { total: 0, items: [] };
   }
 }
 
+// ─── Incident detail ──────────────────────────────────────────────────────────
+// Falls back to demo data ONLY for the pre-wired demo incident ID so the
+// /review/[id] page remains explorable without a backend.
 export async function getIncident(id: string): Promise<Vulnerability> {
   try {
     return await apiFetch<Vulnerability>(`/api/incidents/${id}`, undefined, 0);
   } catch {
     const found = DEMO_INCIDENTS.find((i) => i.id === id);
-    if (!found) throw new ApiError(404, "Not found");
+    if (!found) throw new ApiError(404, "Incident not found");
     return found;
   }
 }
@@ -149,7 +150,8 @@ export async function getAgentTraces(id: string): Promise<AgentTrace[]> {
   }
 }
 
-// ─── Audit ──────────────────────────────────────────────────────────────────
+// ─── Audit ────────────────────────────────────────────────────────────────────
+// Returns empty list when backend is unavailable — no fake data injected.
 export async function getAuditLog(params?: {
   limit?: number;
   offset?: number;
@@ -161,11 +163,20 @@ export async function getAuditLog(params?: {
     const query = qs.toString() ? `?${qs}` : "";
     return await apiFetch<VulnerabilityListResponse>(`/api/audit${query}`, undefined, 0);
   } catch {
-    const limit = params?.limit ?? 100;
-    const offset = params?.offset ?? 0;
-    return {
-      total: DEMO_INCIDENTS.length,
-      items: DEMO_INCIDENTS.slice(offset, offset + limit),
-    };
+    return { total: 0, items: [] };
+  }
+}
+
+// ─── Backend health probe (used by TopBar for status indicator) ───────────────
+export async function probeHealth(): Promise<"live" | "offline" | "unconfigured"> {
+  if (IS_UNCONFIGURED) return "unconfigured";
+  try {
+    const r = await fetch(`${API_BASE}/health`, {
+      next: { revalidate: 0 },
+      signal: AbortSignal.timeout(4000),
+    });
+    return r.ok ? "live" : "offline";
+  } catch {
+    return "offline";
   }
 }
