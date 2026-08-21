@@ -10,11 +10,13 @@ WORKDIR /app
 RUN pip install --no-cache-dir poetry==1.8.3
 
 # Copy dependency files first (layer caching)
+# poetry.lock* uses glob so it works whether or not lock file is present
 COPY pyproject.toml poetry.lock* ./
 
-# Install deps into a virtual env (no-dev)
+# Install deps — if no lock file exists, poetry resolves fresh
 RUN poetry config virtualenvs.in-project true \
-    && poetry install --only=main --no-root --no-interaction --no-ansi
+    && poetry config installer.no-binary :all: false \
+    && poetry install --only=main --no-root --no-interaction --no-ansi 2>&1
 
 # ─── Stage 2: Production image ────────────────────────────────────────────────
 FROM python:3.11-slim AS production
