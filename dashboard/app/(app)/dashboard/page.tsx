@@ -6,14 +6,13 @@ import {
   Zap,
   ShieldCheck,
   TrendingDown,
-  ServerOff,
-  ExternalLink,
 } from "lucide-react";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { IncidentFeed } from "@/components/dashboard/IncidentFeed";
 import { MTTRChart } from "@/components/dashboard/MTTRChart";
 import { SandboxGauge } from "@/components/dashboard/SandboxGauge";
 import { PipelineStatusBar } from "@/components/dashboard/PipelineStatusBar";
+import { SetupWizard } from "@/components/onboarding/SetupWizard";
 import { getMetrics, IS_UNCONFIGURED } from "@/lib/api";
 
 export const metadata: Metadata = {
@@ -49,41 +48,9 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-5 animate-fade-in">
 
-      {/* ── Backend offline banner ─────────────────────────────────────────── */}
+      {/* ── Backend offline: show full setup wizard ──────────────────────── */}
       {backendOffline && (
-        <div className="flex items-start gap-4 p-4 rounded-xl bg-bg-secondary border border-border-subtle">
-          <div className="w-9 h-9 rounded-lg bg-bg-tertiary border border-border-subtle flex items-center justify-center flex-shrink-0 mt-0.5">
-            <ServerOff className="w-4 h-4 text-text-muted" />
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-text-primary">
-              {IS_UNCONFIGURED
-                ? "Backend not configured"
-                : "Backend unreachable"}
-            </p>
-            <p className="text-xs text-text-muted mt-0.5 leading-relaxed">
-              {IS_UNCONFIGURED
-                ? "Set NEXT_PUBLIC_API_URL in your Vercel environment variables to connect to a live backend."
-                : "The configured backend URL is not responding. Check your Railway service is running."}
-            </p>
-            <a
-              href="https://github.com/patelmegh1234/secops-ai#deployment"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 mt-2 text-xs font-mono text-accent-cyan hover:underline"
-            >
-              <ExternalLink className="w-3 h-3" />
-              Setup guide
-            </a>
-          </div>
-          {/* Demo review link — the one demo incident still works */}
-          <a
-            href="/review/a1b2c3d4-0000-0000-0000-000000000001"
-            className="flex-shrink-0 text-xs font-mono text-text-muted border border-border-subtle px-2.5 py-1.5 rounded-lg hover:border-accent-cyan/30 hover:text-text-secondary transition-colors"
-          >
-            View demo incident →
-          </a>
-        </div>
+        <SetupWizard />
       )}
 
       {/* ── Critical alert banner (real data only) ────────────────────────── */}

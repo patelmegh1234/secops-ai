@@ -19,7 +19,7 @@ from slowapi.util import get_remote_address
 
 from src.api.middleware.cors import add_cors_middleware
 from src.api.middleware.rate_limiter import limiter
-from src.api.routers import approvals, dashboard, health, metrics, webhooks, workspaces
+from src.api.routers import approvals, dashboard, demo, health, metrics, webhooks, workspaces
 from src.core.config import get_settings
 from src.core.logging import configure_logging, get_logger
 from src.database.connection import dispose_db, init_db
@@ -157,13 +157,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # ── App Factory ───────────────────────────────────────────────────────────────
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="SecOps-AI API",
+        title="GuardMind — Autonomous SecOps AI",
         description=(
             "Autonomous event-driven security operations agent. "
             "Ingests vulnerability alerts, generates verified patches, "
             "and orchestrates human-in-the-loop GitHub PR creation."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
         openapi_url="/openapi.json" if not settings.is_production else None,
@@ -187,6 +187,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals.router, prefix="/slack", tags=["Slack"])
     app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
     app.include_router(workspaces.router, prefix="/api", tags=["Workspaces"])
+    app.include_router(demo.router, prefix="/api", tags=["Demo"])  # Demo / onboarding
 
     # ── WebSocket Feed ────────────────────────────────────────────────────
     @app.websocket("/ws/feed")
