@@ -1,6 +1,19 @@
+# railway.toml — GuardMind backend Railway configuration
+#
+# CRITICAL: builder = "DOCKERFILE" must be used.
+# Railway auto-detects pyproject.toml and overrides this with Nixpacks+Poetry
+# unless .railwayignore and nixpacks.toml are also present to suppress detection.
+#
+# Fixes:
+#   Issue #1: https://github.com/patelmegh1234/secops-ai/issues/1
+#   Issue #2: https://github.com/patelmegh1234/secops-ai/issues/2
+
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+
+# Suppress Nixpacks cache so any leftover Poetry build cache is invalidated
+buildCommand = ""
 
 [deploy]
 startCommand = "python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 2 --loop uvloop --http httptools --no-access-log"
@@ -8,3 +21,17 @@ healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+
+# Only watch source files — prevents pyproject.toml changes triggering rebuilds
+# that could re-activate Nixpacks
+[[deploy.watchPatterns]]
+pattern = "src/**"
+
+[[deploy.watchPatterns]]
+pattern = "alembic/**"
+
+[[deploy.watchPatterns]]
+pattern = "requirements.txt"
+
+[[deploy.watchPatterns]]
+pattern = "Dockerfile"

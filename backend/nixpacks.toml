@@ -1,0 +1,12 @@
+# nixpacks.toml — explicit Nixpacks config to prevent auto-detection of Python/Poetry.
+#
+# Railway's Nixpacks builder auto-detects pyproject.toml and runs Poetry.
+# Setting providers = [] disables all auto-detection so Nixpacks is a no-op,
+# ensuring railway.toml's `builder = "DOCKERFILE"` takes full effect.
+#
+# This works in tandem with .railwayignore.
+# Issue #1: https://github.com/patelmegh1234/secops-ai/issues/1
+
+[phases.setup]
+# Disable all auto-detected language providers — we use our own Dockerfile
+providers = []

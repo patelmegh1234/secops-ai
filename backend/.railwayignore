@@ -1,0 +1,9 @@
+# .railwayignore — tells Railway's file scanner to ignore these files
+# when detecting the build system. Without this, Railway sees pyproject.toml
+# and overrides railway.toml's `builder = "DOCKERFILE"` setting with Nixpacks+Poetry.
+#
+# Issue #1: https://github.com/patelmegh1234/secops-ai/issues/1
+# Issue #2: https://github.com/patelmegh1234/secops-ai/issues/2
+
+pyproject.toml
+poetry.lock
