@@ -125,7 +125,22 @@ async def run_benchmark(limit: int = 100) -> dict[str, Any]:
 
     await engine.dispose()
 
-    # Build report
+    # ── Early exit when no data ────────────────────────────────────────────────
+    if sample_count == 0:
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "sample_size": 0,
+            "status_breakdown": {},
+            "per_stage_latency": {},
+            "total_mttr": {},
+            "cost_per_vulnerability": {"n": 0},
+            "_note": (
+                "No completed vulnerabilities found in the database. "
+                "Run the pipeline end-to-end at least once (or use "
+                "POST /api/demo/trigger-scan) before benchmarking."
+            ),
+        }
+
     report: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sample_size": sample_count,
@@ -182,10 +197,15 @@ async def run_benchmark(limit: int = 100) -> dict[str, Any]:
 def print_report(report: dict[str, Any]) -> None:
     """Print a formatted human-readable benchmark report to stdout."""
     print("\n" + "=" * 60)
-    print("  SecOps-AI — MTTR Benchmark Report")
+    print("  GuardMind — MTTR Benchmark Report")
     print("=" * 60)
     print(f"  Generated:   {report['generated_at']}")
     print(f"  Sample size: {report['sample_size']} vulnerabilities")
+    if report['sample_size'] == 0:
+        note = report.get('_note', 'No data available.')
+        print(f"\n  ⚠️  {note}")
+        print("=" * 60 + "\n")
+        return
     print(f"  Statuses:    {report['status_breakdown']}")
     print()
     print("  Per-Stage Latency")

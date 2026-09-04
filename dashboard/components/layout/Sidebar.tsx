@@ -100,7 +100,7 @@ export function Sidebar() {
                 const Icon = item.icon;
                 const isActive =
                   pathname === item.href ||
-                  (item.href !== "/" && pathname.startsWith(item.href));
+                  (item.href !== "/" && pathname.startsWith(item.href + "/"));
 
                 return (
                   <Link
@@ -162,7 +162,7 @@ export function Sidebar() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Zap className="w-3 h-3 text-accent-amber" />
-            <span className="text-[10px] font-mono text-text-muted">v1.0.0 · GPT-4o</span>
+            <span className="text-[10px] font-mono text-text-muted">v0.2.0 · GPT-4o</span>
           </div>
           <a
             href="https://github.com/patelmegh1234/secops-ai"
