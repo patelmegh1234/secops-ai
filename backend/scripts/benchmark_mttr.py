@@ -6,7 +6,7 @@ in the database. Does NOT use estimated "manual time" as a baseline.
 
 Usage:
     cd backend
-    poetry run python -m scripts.benchmark_mttr [--limit 50] [--output results.json]
+    python -m scripts.benchmark_mttr [--limit 50] [--output results.json]
 
 Output:
     - Per-stage p50/p95 latency (triage, patch, sandbox, slack, human, PR)
@@ -231,7 +231,7 @@ def print_report(report: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SecOps-AI MTTR Benchmark")
+    parser = argparse.ArgumentParser(description="GuardMind - MTTR Benchmark")
     parser.add_argument("--limit", type=int, default=100,
                         help="Max vulnerabilities to analyse (default: 100)")
     parser.add_argument("--output", type=str, default=None,
