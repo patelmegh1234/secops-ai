@@ -20,7 +20,7 @@ class TestAWSSecrets:
         assert any("AWS Access Key" in m.pattern_name for m in result.matches)
 
     def test_detects_asia_prefix_key(self):
-        code = 'key = "ASIAIOSFODNN7EXAMPLE12"'
+        code = 'key = "ASIAIOSFODNN7EXAMPLE"'
         result = scan_for_secrets(code)
         assert result.clean is False
 
@@ -115,6 +115,16 @@ class TestPEMKeys:
         code = "-----BEGIN PUBLIC KEY-----\ndata..."
         result = scan_for_secrets(code)
         assert result.clean is True  # PUBLIC key is not a secret
+
+    def test_multiline_pem_detected(self):
+        code = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEowIBAAKCAQEA0YqJk123456789...\n"
+            "-----END RSA PRIVATE KEY-----"
+        )
+        result = scan_for_secrets(code)
+        assert result.clean is False
+        assert any("Private Key" in m.pattern_name for m in result.matches)
 
 
 # ── Generic hardcoded password ─────────────────────────────────────────────────
