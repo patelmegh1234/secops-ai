@@ -106,12 +106,15 @@ Examples:
                         default=os.environ.get("GUARDMIND_API_URL", "https://api-production-ac9f.up.railway.app"),
                         help="GuardMind API base URL")
     parser.add_argument("--secret",
-                        default=os.environ.get("GUARDMIND_WEBHOOK_SECRET", "guardmind-webhook-secret-2024"),
-                        help="Webhook HMAC signing secret")
+                        default=os.environ.get("GUARDMIND_WEBHOOK_SECRET"),
+                        help="Webhook HMAC signing secret (or set GUARDMIND_WEBHOOK_SECRET env var)")
     parser.add_argument("--min-severity", default="HIGH", choices=["LOW", "MEDIUM", "HIGH"],
                         help="Minimum severity to forward (default: HIGH)")
 
     args = parser.parse_args()
+
+    if not args.secret:
+        parser.error("Webhook secret required. Provide --secret <SECRET> or set GUARDMIND_WEBHOOK_SECRET env var.")
 
     if not args.target and not args.report_file:
         parser.error("Provide --target (path to scan) or --report-file (existing report)")
